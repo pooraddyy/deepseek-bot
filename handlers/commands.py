@@ -17,6 +17,29 @@ from handlers.messages import stream_to_message, _ds_word_stream, send_error, _k
 
 logger = logging.getLogger(__name__)
 
+WELCOME = """\
+MultiGPT AI  —  your multi-model AI assistant
+
+Model selection
+  /deep   — DeepSeek Flash or Pro
+  /duck   — GPT-4, GPT-5 Mini, Claude, Llama, Mistral...
+
+Images
+  /imggen  <prompt>   — generate an image
+  /imgedit <caption>  — edit a photo (send with caption, or reply to one)
+
+Chat tools
+  /web    <query>  — one-off forced web search
+  /search          — toggle web search on / off for all messages
+  /mode            — switch Fast / Reasoning mode (supported models only)
+
+Session
+  /status  — show current model and settings
+  /reset   — clear conversation history
+
+Just send a message, photo, or document to start chatting.\
+"""
+
 
 async def _auto_delete(msg):
     await asyncio.sleep(0.1)
@@ -34,7 +57,7 @@ async def _stream_text(msg, text: str):
             if len(batch) >= 6:
                 yield batch
                 batch = ""
-                await asyncio.sleep(0.03)
+                await asyncio.sleep(0.02)
         if batch:
             yield batch
 
@@ -50,16 +73,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     saved = await db.load_state(uid)
     if saved:
         s.update(saved)
-
-    welcome = (
-        "Welcome to MultiGPT AI!\n\n"
-        "Use /deep for DeepSeek models, /duck for DuckDuckGo models.\n"
-        "Use /img_gen to generate images, /img_edit to edit one.\n"
-        "Use /web <query> for a forced web search.\n"
-        "Use /search to toggle web search on/off for all messages.\n"
-        "Use /mode to switch Fast / Reasoning (for supported models)."
-    )
-    asyncio.create_task(_stream_text(update.message, welcome))
+    asyncio.create_task(_stream_text(update.message, WELCOME))
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -73,16 +87,16 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     s = state.get(update.effective_user.id)
     if s["provider"] == "deepseek":
-        model_label = f"DeepSeek - {DEEPSEEK_MODELS.get(s['model'], s['model'])}"
+        model_label = f"DeepSeek — {DEEPSEEK_MODELS.get(s['model'], s['model'])}"
     else:
-        model_label = f"Duck - {DUCK_CHAT_MODELS.get(s['model'], s['model'])}"
+        model_label = f"Duck — {DUCK_CHAT_MODELS.get(s['model'], s['model'])}"
         if s["model"] in DUCK_EFFORT_MODELS:
             model_label += f" ({s['effort']} mode)"
     lines = [
-        f"Provider: {s['provider'].capitalize()}",
-        f"Model: {model_label}",
-        f"Search: {'ON' if s['search'] else 'OFF'}",
-        f"Session: {'active' if s['session_id'] else 'new'}",
+        f"Provider : {s['provider'].capitalize()}",
+        f"Model    : {model_label}",
+        f"Search   : {'ON' if s['search'] else 'OFF'}",
+        f"Session  : {'active' if s['session_id'] else 'new'}",
     ]
     await update.message.reply_text("\n".join(lines))
 
@@ -184,13 +198,13 @@ async def _upload_animation_loop(chat, stop_event: asyncio.Event):
         await asyncio.sleep(4)
 
 
-async def cmd_img_gen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_imggen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     prompt = " ".join(context.args).strip() if context.args else ""
     msg    = update.message
 
     if not prompt:
-        sent = await msg.reply_text("Usage: /img_gen <description of image>")
+        sent = await msg.reply_text("Usage: /imggen <description of image>")
         asyncio.create_task(_delete_after(sent, 5))
         return
 
@@ -206,14 +220,14 @@ async def cmd_img_gen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except DuckChatError as e:
         await send_error(msg, f"Image generation error: {e}")
     except Exception as e:
-        logger.exception("cmd_img_gen error")
+        logger.exception("cmd_imggen error")
         await send_error(msg, f"Unexpected error: {e}")
     finally:
         stop_anim.set()
         anim_task.cancel()
 
 
-async def cmd_img_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_imgedit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     msg     = update.message
     caption = " ".join(context.args).strip() if context.args else ""
@@ -226,14 +240,14 @@ async def cmd_img_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not photo:
         sent = await msg.reply_text(
-            "Send a photo with /img_edit <caption>, "
-            "or reply to a photo with /img_edit <caption>."
+            "Send a photo with /imgedit <caption>, "
+            "or reply to a photo with /imgedit <caption>."
         )
         asyncio.create_task(_delete_after(sent, 5))
         return
 
     if not caption:
-        sent = await msg.reply_text("Please provide an edit caption after /img_edit.")
+        sent = await msg.reply_text("Please provide an edit caption after /imgedit.")
         asyncio.create_task(_delete_after(sent, 5))
         return
 
@@ -257,7 +271,7 @@ async def cmd_img_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except DuckChatError as e:
         await send_error(msg, f"Image edit error: {e}")
     except Exception as e:
-        logger.exception("cmd_img_edit error")
+        logger.exception("cmd_imgedit error")
         await send_error(msg, f"Unexpected error: {e}")
     finally:
         stop_anim.set()

@@ -4,6 +4,7 @@ import logging
 import sys
 
 from aiohttp import web
+from telegram import BotCommand
 from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
@@ -23,8 +24,8 @@ from handlers.commands import (
     cmd_mode,
     cmd_search,
     cmd_web,
-    cmd_img_gen,
-    cmd_img_edit,
+    cmd_imggen,
+    cmd_imgedit,
 )
 from handlers.messages import handle_message
 
@@ -34,6 +35,20 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger(__name__)
+
+BOT_COMMANDS = [
+    BotCommand("start",   "Start the bot / show help"),
+    BotCommand("deep",    "Switch to a DeepSeek model"),
+    BotCommand("duck",    "Switch to a DuckDuckGo AI model"),
+    BotCommand("imggen",  "Generate an image from a prompt"),
+    BotCommand("imgedit", "Edit a photo with a caption"),
+    BotCommand("web",     "Force a one-off web search"),
+    BotCommand("search",  "Toggle web search on / off"),
+    BotCommand("mode",    "Switch Fast / Reasoning mode"),
+    BotCommand("status",  "Show current model and settings"),
+    BotCommand("reset",   "Clear the current conversation"),
+    BotCommand("help",    "Show help message"),
+]
 
 
 async def _health(_request: web.Request) -> web.Response:
@@ -62,15 +77,15 @@ async def start_bot() -> None:
     )
 
     app.add_handler(CommandHandler(["start", "help"], cmd_start))
-    app.add_handler(CommandHandler("reset",    cmd_reset))
-    app.add_handler(CommandHandler("status",   cmd_status))
-    app.add_handler(CommandHandler("deep",     cmd_deep))
-    app.add_handler(CommandHandler("duck",     cmd_duck))
-    app.add_handler(CommandHandler("mode",     cmd_mode))
-    app.add_handler(CommandHandler("search",   cmd_search))
-    app.add_handler(CommandHandler("web",      cmd_web))
-    app.add_handler(CommandHandler("img_gen",  cmd_img_gen))
-    app.add_handler(CommandHandler("img_edit", cmd_img_edit))
+    app.add_handler(CommandHandler("reset",   cmd_reset))
+    app.add_handler(CommandHandler("status",  cmd_status))
+    app.add_handler(CommandHandler("deep",    cmd_deep))
+    app.add_handler(CommandHandler("duck",    cmd_duck))
+    app.add_handler(CommandHandler("mode",    cmd_mode))
+    app.add_handler(CommandHandler("search",  cmd_search))
+    app.add_handler(CommandHandler("web",     cmd_web))
+    app.add_handler(CommandHandler("imggen",  cmd_imggen))
+    app.add_handler(CommandHandler("imgedit", cmd_imgedit))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(
         MessageHandler(
@@ -80,6 +95,9 @@ async def start_bot() -> None:
     )
 
     await app.initialize()
+    await app.bot.set_my_commands(BOT_COMMANDS)
+    logger.info("Bot commands registered (%d commands)", len(BOT_COMMANDS))
+
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
     logger.info("MultiGPT AI is running")
