@@ -1,0 +1,208 @@
+import asyncio
+import os
+import tempfile
+import logging
+
+from telegram import Update
+from telegram.ext import ContextTypes
+from telegram.constants import ChatAction
+
+import state
+import db
+from keyboards import deepseek_picker_keyboard, duck_picker_keyboard, effort_keyboard
+from config import DEEPSEEK_MODELS, DUCK_CHAT_MODELS, DUCK_EFFORT_MODELS
+from services.duck_service import generate_image, edit_image, DuckChatError
+from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
+from services.duck_service import chat as duck_chat
+from lib import escape_md
+
+logger = logging.getLogger(__name__)
+
+
+async def _auto_delete(msg):
+    await asyncio.sleep(0.1)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    uid  = update.effective_user.id
+    user = update.effective_user
+    await db.save_user(uid, user.username, user.first_name)
+    s = state.get(uid)
+    saved = await db.load_state(uid)
+    if saved:
+        s.update(saved)
+    await update.message.reply_text(
+        "👋 Welcome to *MultiGPT AI*\\!\n\n"
+        "Use /deep for DeepSeek models, /duck for DuckDuckGo models\\.\n"
+        "Use /img\\_gen to generate images, /img\\_edit to edit one\\.\n"
+        "Use /web \\<query\\> for a forced web search\\.",
+        parse_mode="MarkdownV2",
+    )
+
+
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    state.reset(update.effective_user.id)
+    await update.message.reply_text("Session cleared. Starting fresh!")
+
+
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    s = state.get(update.effective_user.id)
+    if s["provider"] == "deepseek":
+        model_label = f"DeepSeek — {DEEPSEEK_MODELS.get(s['model'], s['model'])}"
+    else:
+        model_label = f"Duck — {DUCK_CHAT_MODELS.get(s['model'], s['model'])}"
+        if s["model"] in DUCK_EFFORT_MODELS:
+            model_label += f" ({s['effort']} mode)"
+    lines = [
+        f"Provider: {s['provider'].capitalize()}",
+        f"Model: {model_label}",
+        f"Search: {'ON' if s['search'] else 'OFF'}",
+        f"Session: {'active' if s['session_id'] else 'new'}",
+    ]
+    await update.message.reply_text("\n".join(lines))
+
+
+async def cmd_deep(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    await update.message.reply_text(
+        "Choose a DeepSeek model:",
+        reply_markup=deepseek_picker_keyboard(),
+    )
+
+
+async def cmd_duck(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    await update.message.reply_text(
+        "Choose a Duck AI model:",
+        reply_markup=duck_picker_keyboard(),
+    )
+
+
+async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    s = state.get(update.effective_user.id)
+    if s["provider"] != "duck" or s["model"] not in DUCK_EFFORT_MODELS:
+        await update.message.reply_text(
+            "Reasoning mode is only available for: GPT-5 Mini, Claude Haiku, GPT-OSS 120B.\n"
+            "Switch to one of those with /duck first."
+        )
+        return
+    await update.message.reply_text(
+        "Choose thinking mode:",
+        reply_markup=effort_keyboard(),
+    )
+
+
+async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    uid        = update.effective_user.id
+    s          = state.get(uid)
+    query_text = " ".join(context.args).strip() if context.args else ""
+    msg        = update.message
+
+    if not query_text:
+        await msg.reply_text("Usage: /web <your search query>")
+        return
+
+    try:
+        await msg.chat.send_action(ChatAction.TYPING)
+        if s["provider"] == "duck":
+            raw = await duck_chat(query_text, model=s["model"], search=True, effort=s["effort"])
+            s["session_id"] = None
+        else:
+            raw, sid = await ds_chat(
+                query_text,
+                model=s["model"],
+                thinking=s["thinking"],
+                search=True,
+                session_id=s["session_id"],
+                files=None,
+            )
+            s["session_id"] = sid
+
+        escaped = escape_md(raw)
+        try:
+            await msg.reply_text(escaped, parse_mode="MarkdownV2")
+        except Exception:
+            await msg.reply_text(raw)
+
+    except (DeepSeekConnectionError, DuckChatError) as e:
+        await msg.reply_text(f"Error: {e}")
+    except DeepSeekAPIError as e:
+        await msg.reply_text(f"API error: {e}")
+    except Exception as e:
+        logger.exception("cmd_web error")
+        await msg.reply_text(f"Unexpected error: {e}")
+
+
+async def cmd_img_gen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    prompt = " ".join(context.args).strip() if context.args else ""
+    msg    = update.message
+
+    if not prompt:
+        await msg.reply_text("Usage: /img_gen <description of image>")
+        return
+
+    try:
+        await msg.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+        path = await generate_image(prompt)
+        with open(path, "rb") as f:
+            await msg.reply_photo(f)
+        os.remove(path)
+    except DuckChatError as e:
+        await msg.reply_text(f"Image generation error: {e}")
+    except Exception as e:
+        logger.exception("cmd_img_gen error")
+        await msg.reply_text(f"Unexpected error: {e}")
+
+
+async def cmd_img_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    msg    = update.message
+    caption = " ".join(context.args).strip() if context.args else ""
+
+    photo = None
+    if msg.photo:
+        photo = msg.photo[-1]
+    elif msg.reply_to_message and msg.reply_to_message.photo:
+        photo = msg.reply_to_message.photo[-1]
+
+    if not photo:
+        await msg.reply_text(
+            "Send a photo with /img_edit <caption>, "
+            "or reply to a photo with /img_edit <caption>."
+        )
+        return
+
+    if not caption:
+        await msg.reply_text("Please provide an edit caption after /img_edit.")
+        return
+
+    try:
+        await msg.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+        tg_file = await photo.get_file()
+        fd, src_path = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)
+        await tg_file.download_to_drive(src_path)
+
+        out_path = await edit_image(caption, src_path)
+
+        with open(out_path, "rb") as f:
+            await msg.reply_photo(f)
+
+        os.remove(src_path)
+        os.remove(out_path)
+
+    except DuckChatError as e:
+        await msg.reply_text(f"Image edit error: {e}")
+    except Exception as e:
+        logger.exception("cmd_img_edit error")
+        await msg.reply_text(f"Unexpected error: {e}")

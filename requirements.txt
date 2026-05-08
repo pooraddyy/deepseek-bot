@@ -1,0 +1,7 @@
+python-telegram-bot[job-queue]>=21.0
+p2d-deepseek
+p2d-duck
+python-dotenv
+aiohttp
+p2dmd
+motor
