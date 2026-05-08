@@ -1,3 +1,4 @@
+import asyncio
 import os
 import tempfile
 import logging
@@ -9,13 +10,13 @@ from telegram.ext import ContextTypes
 import state
 import db
 from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
-from services.duck_service import chat as duck_chat, DuckChatError
+from services.duck_service import stream_chat as duck_stream, DuckChatError
 from lib import escape_md
 
 logger = logging.getLogger(__name__)
 
-SPLIT_MARKER = "\n@|@|@|@\n\n"
-MSG_LIMIT    = 3800
+MSG_LIMIT      = 3800
+STREAM_INTERVAL = 0.8
 
 
 async def _download(file_obj, suffix: str) -> str:
@@ -25,24 +26,58 @@ async def _download(file_obj, suffix: str) -> str:
     return path
 
 
-async def _send_response(msg, raw_text: str) -> None:
-    if not raw_text:
-        raw_text = "(empty response)"
+async def _ds_word_stream(text: str):
+    words = text.split()
+    batch: list[str] = []
+    for word in words:
+        batch.append(word)
+        if len(batch) >= 5:
+            yield " ".join(batch) + " "
+            batch = []
+            await asyncio.sleep(0.04)
+    if batch:
+        yield " ".join(batch)
 
-    parts: list[str] = []
-    for chunk in raw_text.split(SPLIT_MARKER):
-        if len(chunk) <= MSG_LIMIT:
-            parts.append(chunk)
-        else:
-            for i in range(0, len(chunk), MSG_LIMIT):
-                parts.append(chunk[i : i + MSG_LIMIT])
 
-    for part in parts:
-        escaped = escape_md(part)
+async def stream_to_message(msg, chunks):
+    sent        = await msg.reply_text("▌")
+    accumulated = ""
+    last_edit   = asyncio.get_event_loop().time()
+
+    async for chunk in chunks:
+        accumulated += chunk
+        now = asyncio.get_event_loop().time()
+        if now - last_edit >= STREAM_INTERVAL:
+            display = accumulated if len(accumulated) <= MSG_LIMIT else accumulated[-MSG_LIMIT:]
+            try:
+                await sent.edit_text(escape_md(display) + "▌", parse_mode="MarkdownV2")
+            except Exception:
+                try:
+                    await sent.edit_text(display + "▌")
+                except Exception:
+                    pass
+            last_edit = now
+
+    if not accumulated:
+        accumulated = "(empty response)"
+
+    if len(accumulated) <= MSG_LIMIT:
+        escaped = escape_md(accumulated)
         try:
-            await msg.reply_text(escaped, parse_mode="MarkdownV2")
+            await sent.edit_text(escaped, parse_mode="MarkdownV2")
         except Exception:
-            await msg.reply_text(part)
+            await sent.edit_text(accumulated)
+    else:
+        try:
+            await sent.delete()
+        except Exception:
+            pass
+        for i in range(0, len(accumulated), MSG_LIMIT):
+            part = accumulated[i : i + MSG_LIMIT]
+            try:
+                await msg.reply_text(escape_md(part), parse_mode="MarkdownV2")
+            except Exception:
+                await msg.reply_text(part)
 
 
 async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
@@ -53,7 +88,6 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
         if s["provider"] == "duck":
             if file_paths:
                 from duck_ai import DuckChat, ImagePart
-                import asyncio
 
                 def _run_vision():
                     parts = [prompt] + [ImagePart.from_path(p) for p in file_paths]
@@ -61,15 +95,23 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
                         return duck.ask(parts, web_search=s["search"])
 
                 raw = await asyncio.to_thread(_run_vision)
+                s["session_id"] = None
+
+                async def _single_chunk():
+                    yield raw
+
+                await stream_to_message(msg, _single_chunk())
             else:
-                raw = await duck_chat(
-                    prompt,
-                    model=s["model"],
-                    search=s["search"],
-                    effort=s["effort"],
+                s["session_id"] = None
+                await stream_to_message(
+                    msg,
+                    duck_stream(
+                        prompt,
+                        model=s["model"],
+                        search=s["search"],
+                        effort=s["effort"],
+                    ),
                 )
-            s["session_id"] = None
-            await _send_response(msg, raw)
 
         else:
             raw, sid = await ds_chat(
@@ -81,7 +123,7 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
                 files=file_paths or None,
             )
             s["session_id"] = sid
-            await _send_response(msg, raw)
+            await stream_to_message(msg, _ds_word_stream(raw))
 
     except DeepSeekConnectionError:
         await msg.reply_text("Connection error — please try again.")

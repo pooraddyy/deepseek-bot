@@ -21,6 +21,6 @@ def duck_picker_keyboard() -> InlineKeyboardMarkup:
 
 def effort_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("⚡ Fast",       callback_data="set_effort:fast"),
-        InlineKeyboardButton("🧠 Reasoning",  callback_data="set_effort:reasoning"),
+        InlineKeyboardButton("Fast",       callback_data="set_effort:fast"),
+        InlineKeyboardButton("Reasoning",  callback_data="set_effort:reasoning"),
     ]])

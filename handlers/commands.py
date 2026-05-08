@@ -11,9 +11,9 @@ import state
 import db
 from keyboards import deepseek_picker_keyboard, duck_picker_keyboard, effort_keyboard
 from config import DEEPSEEK_MODELS, DUCK_CHAT_MODELS, DUCK_EFFORT_MODELS
-from services.duck_service import generate_image, edit_image, DuckChatError
+from services.duck_service import generate_image, edit_image, stream_chat as duck_stream, DuckChatError
 from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
-from services.duck_service import chat as duck_chat
+from handlers.messages import stream_to_message, _ds_word_stream
 from lib import escape_md
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,21 @@ async def _auto_delete(msg):
         pass
 
 
+async def _stream_text(msg, text: str):
+    async def _chars():
+        batch = ""
+        for char in text:
+            batch += char
+            if len(batch) >= 6:
+                yield batch
+                batch = ""
+                await asyncio.sleep(0.03)
+        if batch:
+            yield batch
+
+    await stream_to_message(msg, _chars())
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     uid  = update.effective_user.id
@@ -36,13 +51,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     saved = await db.load_state(uid)
     if saved:
         s.update(saved)
-    await update.message.reply_text(
-        "👋 Welcome to *MultiGPT AI*\\!\n\n"
-        "Use /deep for DeepSeek models, /duck for DuckDuckGo models\\.\n"
-        "Use /img\\_gen to generate images, /img\\_edit to edit one\\.\n"
-        "Use /web \\<query\\> for a forced web search\\.",
-        parse_mode="MarkdownV2",
+
+    welcome = (
+        "Welcome to MultiGPT AI!\n\n"
+        "Use /deep for DeepSeek models, /duck for DuckDuckGo models.\n"
+        "Use /img_gen to generate images, /img_edit to edit one.\n"
+        "Use /web <query> for a forced web search.\n"
+        "Use /mode to switch Fast / Reasoning (for supported models)."
     )
+    await _stream_text(update.message, welcome)
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -55,9 +72,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     s = state.get(update.effective_user.id)
     if s["provider"] == "deepseek":
-        model_label = f"DeepSeek — {DEEPSEEK_MODELS.get(s['model'], s['model'])}"
+        model_label = f"DeepSeek - {DEEPSEEK_MODELS.get(s['model'], s['model'])}"
     else:
-        model_label = f"Duck — {DUCK_CHAT_MODELS.get(s['model'], s['model'])}"
+        model_label = f"Duck - {DUCK_CHAT_MODELS.get(s['model'], s['model'])}"
         if s["model"] in DUCK_EFFORT_MODELS:
             model_label += f" ({s['effort']} mode)"
     lines = [
@@ -114,8 +131,11 @@ async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await msg.chat.send_action(ChatAction.TYPING)
         if s["provider"] == "duck":
-            raw = await duck_chat(query_text, model=s["model"], search=True, effort=s["effort"])
             s["session_id"] = None
+            await stream_to_message(
+                msg,
+                duck_stream(query_text, model=s["model"], search=True, effort=s["effort"]),
+            )
         else:
             raw, sid = await ds_chat(
                 query_text,
@@ -126,12 +146,7 @@ async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 files=None,
             )
             s["session_id"] = sid
-
-        escaped = escape_md(raw)
-        try:
-            await msg.reply_text(escaped, parse_mode="MarkdownV2")
-        except Exception:
-            await msg.reply_text(raw)
+            await stream_to_message(msg, _ds_word_stream(raw))
 
     except (DeepSeekConnectionError, DuckChatError) as e:
         await msg.reply_text(f"Error: {e}")
@@ -166,7 +181,7 @@ async def cmd_img_gen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_img_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
-    msg    = update.message
+    msg     = update.message
     caption = " ".join(context.args).strip() if context.args else ""
 
     photo = None
