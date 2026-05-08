@@ -15,7 +15,7 @@ from lib import escape_md
 
 logger = logging.getLogger(__name__)
 
-MSG_LIMIT      = 3800
+MSG_LIMIT       = 3800
 STREAM_INTERVAL = 0.8
 
 
@@ -24,6 +24,28 @@ async def _download(file_obj, suffix: str) -> str:
     os.close(fd)
     await file_obj.download_to_drive(path)
     return path
+
+
+async def _delete_after(msg, delay: float = 5.0):
+    await asyncio.sleep(delay)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+
+async def send_error(msg, text: str, delay: float = 5.0):
+    sent = await msg.reply_text(text)
+    asyncio.create_task(_delete_after(sent, delay))
+
+
+async def _keep_typing(chat, action: str = ChatAction.TYPING, stop_event: asyncio.Event = None):
+    while not (stop_event and stop_event.is_set()):
+        try:
+            await chat.send_action(action)
+        except Exception:
+            pass
+        await asyncio.sleep(4)
 
 
 async def _ds_word_stream(text: str):
@@ -82,9 +104,11 @@ async def stream_to_message(msg, chunks):
 
 async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
     s = state.get(uid)
+    stop_typing = asyncio.Event()
+    typing_task = asyncio.create_task(
+        _keep_typing(msg.chat, ChatAction.TYPING, stop_typing)
+    )
     try:
-        await msg.chat.send_action(ChatAction.TYPING)
-
         if s["provider"] == "duck":
             if file_paths:
                 from duck_ai import DuckChat, ImagePart
@@ -126,13 +150,15 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
             await stream_to_message(msg, _ds_word_stream(raw))
 
     except DeepSeekConnectionError:
-        await msg.reply_text("Connection error — please try again.")
+        await send_error(msg, "Connection error — please try again.")
     except (DeepSeekAPIError, DuckChatError) as e:
-        await msg.reply_text(f"API error: {e}")
+        await send_error(msg, f"API error: {e}")
     except Exception as e:
         logger.exception("Unexpected error in _process")
-        await msg.reply_text(f"Unexpected error: {e}")
+        await send_error(msg, f"Unexpected error: {e}")
     finally:
+        stop_typing.set()
+        typing_task.cancel()
         for p in file_paths:
             try:
                 os.remove(p)
@@ -166,7 +192,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     uid  = update.effective_user.id
     user = update.effective_user
-    await db.save_user(uid, user.username, user.first_name)
+    asyncio.create_task(db.save_user(uid, user.username, user.first_name))
 
     if msg.media_group_id:
         if msg.photo:
@@ -206,4 +232,4 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         suffix  = os.path.splitext(msg.document.file_name or "")[1] or ".bin"
         file_paths.append(await _download(tg_file, suffix))
 
-    await _process(uid, msg, prompt, file_paths)
+    asyncio.create_task(_process(uid, msg, prompt, file_paths))

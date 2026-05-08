@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import logging
 import sys
 
@@ -20,6 +21,7 @@ from handlers.commands import (
     cmd_deep,
     cmd_duck,
     cmd_mode,
+    cmd_search,
     cmd_web,
     cmd_img_gen,
     cmd_img_edit,
@@ -49,21 +51,26 @@ async def start_health_server() -> None:
 
 
 async def start_bot() -> None:
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=32))
+
     app = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
+        .concurrent_updates(True)
         .build()
     )
 
     app.add_handler(CommandHandler(["start", "help"], cmd_start))
-    app.add_handler(CommandHandler("reset",   cmd_reset))
-    app.add_handler(CommandHandler("status",  cmd_status))
-    app.add_handler(CommandHandler("deep",    cmd_deep))
-    app.add_handler(CommandHandler("duck",    cmd_duck))
-    app.add_handler(CommandHandler("mode",    cmd_mode))
-    app.add_handler(CommandHandler("web",     cmd_web))
-    app.add_handler(CommandHandler("img_gen", cmd_img_gen))
-    app.add_handler(CommandHandler("img_edit",cmd_img_edit))
+    app.add_handler(CommandHandler("reset",    cmd_reset))
+    app.add_handler(CommandHandler("status",   cmd_status))
+    app.add_handler(CommandHandler("deep",     cmd_deep))
+    app.add_handler(CommandHandler("duck",     cmd_duck))
+    app.add_handler(CommandHandler("mode",     cmd_mode))
+    app.add_handler(CommandHandler("search",   cmd_search))
+    app.add_handler(CommandHandler("web",      cmd_web))
+    app.add_handler(CommandHandler("img_gen",  cmd_img_gen))
+    app.add_handler(CommandHandler("img_edit", cmd_img_edit))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(
         MessageHandler(
@@ -75,7 +82,7 @@ async def start_bot() -> None:
     await app.initialize()
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
-    logger.info("MultiGPT AI is running — press Ctrl+C to stop")
+    logger.info("MultiGPT AI is running")
 
     try:
         await asyncio.Event().wait()

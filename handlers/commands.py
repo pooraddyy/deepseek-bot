@@ -13,8 +13,7 @@ from keyboards import deepseek_picker_keyboard, duck_picker_keyboard, effort_key
 from config import DEEPSEEK_MODELS, DUCK_CHAT_MODELS, DUCK_EFFORT_MODELS
 from services.duck_service import generate_image, edit_image, stream_chat as duck_stream, DuckChatError
 from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
-from handlers.messages import stream_to_message, _ds_word_stream
-from lib import escape_md
+from handlers.messages import stream_to_message, _ds_word_stream, send_error, _keep_typing, _delete_after
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     uid  = update.effective_user.id
     user = update.effective_user
-    await db.save_user(uid, user.username, user.first_name)
+    asyncio.create_task(db.save_user(uid, user.username, user.first_name))
     s = state.get(uid)
     saved = await db.load_state(uid)
     if saved:
@@ -57,15 +56,17 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Use /deep for DeepSeek models, /duck for DuckDuckGo models.\n"
         "Use /img_gen to generate images, /img_edit to edit one.\n"
         "Use /web <query> for a forced web search.\n"
+        "Use /search to toggle web search on/off for all messages.\n"
         "Use /mode to switch Fast / Reasoning (for supported models)."
     )
-    await _stream_text(update.message, welcome)
+    asyncio.create_task(_stream_text(update.message, welcome))
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     state.reset(update.effective_user.id)
-    await update.message.reply_text("Session cleared. Starting fresh!")
+    sent = await update.message.reply_text("Session cleared.")
+    asyncio.create_task(_delete_after(sent, 3))
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -106,15 +107,27 @@ async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     s = state.get(update.effective_user.id)
     if s["provider"] != "duck" or s["model"] not in DUCK_EFFORT_MODELS:
-        await update.message.reply_text(
+        sent = await update.message.reply_text(
             "Reasoning mode is only available for: GPT-5 Mini, Claude Haiku, GPT-OSS 120B.\n"
             "Switch to one of those with /duck first."
         )
+        asyncio.create_task(_delete_after(sent, 5))
         return
     await update.message.reply_text(
         "Choose thinking mode:",
         reply_markup=effort_keyboard(),
     )
+
+
+async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    uid = update.effective_user.id
+    s   = state.get(uid)
+    s["search"] = not s["search"]
+    asyncio.create_task(db.save_state(uid, s))
+    status = "ON" if s["search"] else "OFF"
+    sent = await update.message.reply_text(f"Web search: {status}")
+    asyncio.create_task(_delete_after(sent, 3))
 
 
 async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -125,11 +138,13 @@ async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg        = update.message
 
     if not query_text:
-        await msg.reply_text("Usage: /web <your search query>")
+        sent = await msg.reply_text("Usage: /web <your search query>")
+        asyncio.create_task(_delete_after(sent, 5))
         return
 
+    stop_typing = asyncio.Event()
+    typing_task = asyncio.create_task(_keep_typing(msg.chat, ChatAction.TYPING, stop_typing))
     try:
-        await msg.chat.send_action(ChatAction.TYPING)
         if s["provider"] == "duck":
             s["session_id"] = None
             await stream_to_message(
@@ -149,12 +164,24 @@ async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await stream_to_message(msg, _ds_word_stream(raw))
 
     except (DeepSeekConnectionError, DuckChatError) as e:
-        await msg.reply_text(f"Error: {e}")
+        await send_error(msg, f"Error: {e}")
     except DeepSeekAPIError as e:
-        await msg.reply_text(f"API error: {e}")
+        await send_error(msg, f"API error: {e}")
     except Exception as e:
         logger.exception("cmd_web error")
-        await msg.reply_text(f"Unexpected error: {e}")
+        await send_error(msg, f"Unexpected error: {e}")
+    finally:
+        stop_typing.set()
+        typing_task.cancel()
+
+
+async def _upload_animation_loop(chat, stop_event: asyncio.Event):
+    while not stop_event.is_set():
+        try:
+            await chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+        except Exception:
+            pass
+        await asyncio.sleep(4)
 
 
 async def cmd_img_gen(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -163,20 +190,27 @@ async def cmd_img_gen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg    = update.message
 
     if not prompt:
-        await msg.reply_text("Usage: /img_gen <description of image>")
+        sent = await msg.reply_text("Usage: /img_gen <description of image>")
+        asyncio.create_task(_delete_after(sent, 5))
         return
 
+    stop_anim = asyncio.Event()
+    anim_task = asyncio.create_task(_upload_animation_loop(msg.chat, stop_anim))
     try:
-        await msg.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
         path = await generate_image(prompt)
+        stop_anim.set()
+        anim_task.cancel()
         with open(path, "rb") as f:
             await msg.reply_photo(f)
         os.remove(path)
     except DuckChatError as e:
-        await msg.reply_text(f"Image generation error: {e}")
+        await send_error(msg, f"Image generation error: {e}")
     except Exception as e:
         logger.exception("cmd_img_gen error")
-        await msg.reply_text(f"Unexpected error: {e}")
+        await send_error(msg, f"Unexpected error: {e}")
+    finally:
+        stop_anim.set()
+        anim_task.cancel()
 
 
 async def cmd_img_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -191,18 +225,23 @@ async def cmd_img_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo = msg.reply_to_message.photo[-1]
 
     if not photo:
-        await msg.reply_text(
+        sent = await msg.reply_text(
             "Send a photo with /img_edit <caption>, "
             "or reply to a photo with /img_edit <caption>."
         )
+        asyncio.create_task(_delete_after(sent, 5))
         return
 
     if not caption:
-        await msg.reply_text("Please provide an edit caption after /img_edit.")
+        sent = await msg.reply_text("Please provide an edit caption after /img_edit.")
+        asyncio.create_task(_delete_after(sent, 5))
         return
 
+    stop_anim = asyncio.Event()
+    anim_task = asyncio.create_task(_upload_animation_loop(msg.chat, stop_anim))
+    src_path  = None
+    out_path  = None
     try:
-        await msg.chat.send_action(ChatAction.UPLOAD_DOCUMENT)
         tg_file = await photo.get_file()
         fd, src_path = tempfile.mkstemp(suffix=".jpg")
         os.close(fd)
@@ -210,14 +249,22 @@ async def cmd_img_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         out_path = await edit_image(caption, src_path)
 
+        stop_anim.set()
+        anim_task.cancel()
         with open(out_path, "rb") as f:
             await msg.reply_photo(f)
 
-        os.remove(src_path)
-        os.remove(out_path)
-
     except DuckChatError as e:
-        await msg.reply_text(f"Image edit error: {e}")
+        await send_error(msg, f"Image edit error: {e}")
     except Exception as e:
         logger.exception("cmd_img_edit error")
-        await msg.reply_text(f"Unexpected error: {e}")
+        await send_error(msg, f"Unexpected error: {e}")
+    finally:
+        stop_anim.set()
+        anim_task.cancel()
+        for p in [src_path, out_path]:
+            if p:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
