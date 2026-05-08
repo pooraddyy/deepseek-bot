@@ -17,6 +17,7 @@ from config import BOT_TOKEN, PORT
 from handlers.callbacks import handle_callback
 from handlers.commands import (
     cmd_start,
+    cmd_help,
     cmd_reset,
     cmd_status,
     cmd_deep,
@@ -37,7 +38,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_COMMANDS = [
-    BotCommand("start",   "Start the bot / show help"),
+    BotCommand("start",   "Start the bot"),
+    BotCommand("help",    "Show all commands"),
     BotCommand("deep",    "Switch to a DeepSeek model"),
     BotCommand("duck",    "Switch to a DuckDuckGo AI model"),
     BotCommand("imggen",  "Generate an image from a prompt"),
@@ -47,7 +49,6 @@ BOT_COMMANDS = [
     BotCommand("mode",    "Switch Fast / Reasoning mode"),
     BotCommand("status",  "Show current model and settings"),
     BotCommand("reset",   "Clear the current conversation"),
-    BotCommand("help",    "Show help message"),
 ]
 
 
@@ -76,7 +77,8 @@ async def start_bot() -> None:
         .build()
     )
 
-    app.add_handler(CommandHandler(["start", "help"], cmd_start))
+    app.add_handler(CommandHandler("start",   cmd_start))
+    app.add_handler(CommandHandler("help",    cmd_help))
     app.add_handler(CommandHandler("reset",   cmd_reset))
     app.add_handler(CommandHandler("status",  cmd_status))
     app.add_handler(CommandHandler("deep",    cmd_deep))

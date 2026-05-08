@@ -13,20 +13,20 @@ from keyboards import deepseek_picker_keyboard, duck_picker_keyboard, effort_key
 from config import DEEPSEEK_MODELS, DUCK_CHAT_MODELS, DUCK_EFFORT_MODELS
 from services.duck_service import generate_image, edit_image, stream_chat as duck_stream, DuckChatError
 from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
-from handlers.messages import stream_to_message, _ds_word_stream, send_error, _keep_typing, _delete_after
+from handlers.messages import send_response, send_error, _collect_duck, _keep_typing, _delete_after
 
 logger = logging.getLogger(__name__)
 
-WELCOME = """\
-MultiGPT AI  —  your multi-model AI assistant
+HELP_TEXT = """\
+MultiGPT AI  —  commands
 
 Model selection
-  /deep   — DeepSeek Flash or Pro
-  /duck   — GPT-4, GPT-5 Mini, Claude, Llama, Mistral...
+  /deep   — switch to DeepSeek Flash or Pro
+  /duck   — switch to GPT-4, GPT-5 Mini, Claude, Llama, Mistral...
 
 Images
   /imggen  <prompt>   — generate an image
-  /imgedit <caption>  — edit a photo (send with caption, or reply to one)
+  /imgedit <caption>  — edit a photo (send with caption or reply to one)
 
 Chat tools
   /web    <query>  — one-off forced web search
@@ -34,10 +34,10 @@ Chat tools
   /mode            — switch Fast / Reasoning mode (supported models only)
 
 Session
-  /status  — show current model and settings
+  /status  — current model and settings
   /reset   — clear conversation history
 
-Just send a message, photo, or document to start chatting.\
+Send any message, photo or document to start chatting.\
 """
 
 
@@ -49,20 +49,16 @@ async def _auto_delete(msg):
         pass
 
 
-async def _stream_text(msg, text: str):
-    async def _chars():
-        batch = ""
-        for char in text:
-            batch += char
-            if len(batch) >= 6:
-                yield batch
-                batch = ""
-                await asyncio.sleep(0.02)
-        if batch:
-            yield batch
+async def _upload_animation_loop(chat, stop_event: asyncio.Event):
+    while not stop_event.is_set():
+        try:
+            await chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+        except Exception:
+            pass
+        await asyncio.sleep(4)
 
-    await stream_to_message(msg, _chars())
 
+# ── /start ────────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
@@ -73,8 +69,21 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     saved = await db.load_state(uid)
     if saved:
         s.update(saved)
-    asyncio.create_task(_stream_text(update.message, WELCOME))
+    name = user.first_name or "there"
+    await update.message.reply_text(
+        f"Hey {name}! I'm MultiGPT AI.\n"
+        "Use /help to see all available commands."
+    )
 
+
+# ── /help ─────────────────────────────────────────────────────────────────────
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    await update.message.reply_text(HELP_TEXT)
+
+
+# ── /reset ────────────────────────────────────────────────────────────────────
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
@@ -82,6 +91,8 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent = await update.message.reply_text("Session cleared.")
     asyncio.create_task(_delete_after(sent, 3))
 
+
+# ── /status ───────────────────────────────────────────────────────────────────
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
@@ -100,6 +111,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text("\n".join(lines))
 
+
+# ── /deep / /duck / /mode ─────────────────────────────────────────────────────
 
 async def cmd_deep(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
@@ -133,6 +146,8 @@ async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ── /search ───────────────────────────────────────────────────────────────────
+
 async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     uid = update.effective_user.id
@@ -143,6 +158,8 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent = await update.message.reply_text(f"Web search: {status}")
     asyncio.create_task(_delete_after(sent, 3))
 
+
+# ── /web ──────────────────────────────────────────────────────────────────────
 
 async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
@@ -161,9 +178,8 @@ async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if s["provider"] == "duck":
             s["session_id"] = None
-            await stream_to_message(
-                msg,
-                duck_stream(query_text, model=s["model"], search=True, effort=s["effort"]),
+            raw = await _collect_duck(
+                duck_stream(query_text, model=s["model"], search=True, effort=s["effort"])
             )
         else:
             raw, sid = await ds_chat(
@@ -175,7 +191,10 @@ async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 files=None,
             )
             s["session_id"] = sid
-            await stream_to_message(msg, _ds_word_stream(raw))
+
+        stop_typing.set()
+        typing_task.cancel()
+        await send_response(msg, raw)
 
     except (DeepSeekConnectionError, DuckChatError) as e:
         await send_error(msg, f"Error: {e}")
@@ -189,14 +208,7 @@ async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
         typing_task.cancel()
 
 
-async def _upload_animation_loop(chat, stop_event: asyncio.Event):
-    while not stop_event.is_set():
-        try:
-            await chat.send_action(ChatAction.UPLOAD_DOCUMENT)
-        except Exception:
-            pass
-        await asyncio.sleep(4)
-
+# ── /imggen ───────────────────────────────────────────────────────────────────
 
 async def cmd_imggen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
@@ -226,6 +238,8 @@ async def cmd_imggen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stop_anim.set()
         anim_task.cancel()
 
+
+# ── /imgedit ──────────────────────────────────────────────────────────────────
 
 async def cmd_imgedit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
@@ -262,7 +276,6 @@ async def cmd_imgedit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await tg_file.download_to_drive(src_path)
 
         out_path = await edit_image(caption, src_path)
-
         stop_anim.set()
         anim_task.cancel()
         with open(out_path, "rb") as f:

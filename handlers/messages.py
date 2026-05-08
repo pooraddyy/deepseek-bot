@@ -16,22 +16,71 @@ from lib import escape_md
 
 logger = logging.getLogger(__name__)
 
-MSG_LIMIT       = 3800
-STREAM_INTERVAL = 0.8
-
+TG_LIMIT          = 4096
+SAFE_LIMIT        = TG_LIMIT - 100          # headroom for escape overhead
 IMAGE_ONLY_PROMPT = "Describe this image in detail."
 ALBUM_ONLY_PROMPT = "Describe these images in detail."
 IMAGE_EXTS        = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".heic"}
 
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _is_image(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in IMAGE_EXTS
 
 
 def _is_real_timeout(exc: Exception) -> bool:
-    """Only match genuine DeepSeek file-parsing timeouts, not generic errors."""
     text = str(exc).lower()
     return "timed out" in text and ("parsing" in text or "file_id" in text or "fetch" in text)
+
+
+def _split_text(text: str) -> list[str]:
+    """
+    Split long text into Telegram-safe chunks (≤ SAFE_LIMIT chars).
+    Prefers double-newline paragraph breaks, then single newlines, then spaces.
+    """
+    if len(text) <= SAFE_LIMIT:
+        return [text]
+
+    parts: list[str] = []
+    while len(text) > SAFE_LIMIT:
+        window = text[:SAFE_LIMIT]
+        idx = window.rfind("\n\n")
+        if idx < SAFE_LIMIT // 4:
+            idx = window.rfind("\n")
+        if idx < 1:
+            idx = window.rfind(" ")
+        if idx < 1:
+            idx = SAFE_LIMIT
+        parts.append(text[:idx].rstrip())
+        text = text[idx:].lstrip("\n")
+
+    if text.strip():
+        parts.append(text.strip())
+    return [p for p in parts if p]
+
+
+async def send_response(msg, text: str) -> None:
+    """Send AI response, splitting at 4096 chars, trying MarkdownV2 then plain."""
+    if not text:
+        text = "(empty response)"
+    for part in _split_text(text):
+        escaped = escape_md(part)
+        try:
+            await msg.reply_text(escaped, parse_mode="MarkdownV2")
+        except Exception:
+            try:
+                await msg.reply_text(part)
+            except Exception:
+                logger.exception("Failed to send message part")
+
+
+async def _collect_duck(gen) -> str:
+    """Collect all chunks from a duck async generator into one string."""
+    chunks: list[str] = []
+    async for chunk in gen:
+        chunks.append(chunk)
+    return "".join(chunks)
 
 
 async def _download(file_obj, suffix: str) -> str:
@@ -63,72 +112,18 @@ async def _keep_typing(chat, action: str = ChatAction.TYPING, stop_event: asynci
         await asyncio.sleep(4)
 
 
-async def _ds_word_stream(text: str):
-    words = text.split()
-    batch: list[str] = []
-    for word in words:
-        batch.append(word)
-        if len(batch) >= 5:
-            yield " ".join(batch) + " "
-            batch = []
-            await asyncio.sleep(0.04)
-    if batch:
-        yield " ".join(batch)
-
-
-async def stream_to_message(msg, chunks):
-    sent        = await msg.reply_text("▌")
-    accumulated = ""
-    last_edit   = asyncio.get_event_loop().time()
-
-    async for chunk in chunks:
-        accumulated += chunk
-        now = asyncio.get_event_loop().time()
-        if now - last_edit >= STREAM_INTERVAL:
-            display = accumulated if len(accumulated) <= MSG_LIMIT else accumulated[-MSG_LIMIT:]
-            try:
-                await sent.edit_text(escape_md(display) + "▌", parse_mode="MarkdownV2")
-            except Exception:
-                try:
-                    await sent.edit_text(display + "▌")
-                except Exception:
-                    pass
-            last_edit = now
-
-    if not accumulated:
-        accumulated = "(empty response)"
-
-    if len(accumulated) <= MSG_LIMIT:
-        escaped = escape_md(accumulated)
-        try:
-            await sent.edit_text(escaped, parse_mode="MarkdownV2")
-        except Exception:
-            await sent.edit_text(accumulated)
-    else:
-        try:
-            await sent.delete()
-        except Exception:
-            pass
-        for i in range(0, len(accumulated), MSG_LIMIT):
-            part = accumulated[i : i + MSG_LIMIT]
-            try:
-                await msg.reply_text(escape_md(part), parse_mode="MarkdownV2")
-            except Exception:
-                await msg.reply_text(part)
-
+# ── Core processor ────────────────────────────────────────────────────────────
 
 async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
     s = state.get(uid)
 
-    # Use UPLOAD_DOCUMENT animation for files, TYPING for plain text
     anim_action = ChatAction.UPLOAD_DOCUMENT if file_paths else ChatAction.TYPING
     stop_anim   = asyncio.Event()
     anim_task   = asyncio.create_task(_keep_typing(msg.chat, anim_action, stop_anim))
 
     try:
         if file_paths:
-            # ── File uploads: ALWAYS use DeepSeek for OCR / vision ──────────────
-            # Use current DS model if on deepseek, else fall back to default flash
+            # ALWAYS use DeepSeek for file OCR / vision regardless of provider
             ds_model   = s["model"] if s["provider"] == "deepseek" else DEFAULT_MODEL
             all_images = all(_is_image(p) for p in file_paths)
 
@@ -144,35 +139,34 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
                 s["session_id"] = sid
                 stop_anim.set()
                 anim_task.cancel()
-                await stream_to_message(msg, _ds_word_stream(raw))
+                await send_response(msg, raw)
 
-            except (DeepSeekAPIError, Exception) as exc:
+            except Exception as exc:
                 if all_images and _is_real_timeout(exc):
-                    # Real parse timeout → fallback to duck vision (images only)
                     logger.warning("DeepSeek vision timed out — falling back to duck vision: %s", exc)
                     stop_anim.set()
                     anim_task.cancel()
                     raw = await vision_chat(prompt, file_paths)
                     s["session_id"] = None
-                    await stream_to_message(msg, _ds_word_stream(raw))
+                    await send_response(msg, raw)
                 else:
                     raise
 
         elif s["provider"] == "duck":
-            # ── Text chat via duck ───────────────────────────────────────────────
             s["session_id"] = None
-            await stream_to_message(
-                msg,
+            raw = await _collect_duck(
                 duck_stream(
                     prompt,
                     model=s["model"],
                     search=s["search"],
                     effort=s["effort"],
-                ),
+                )
             )
+            stop_anim.set()
+            anim_task.cancel()
+            await send_response(msg, raw)
 
         else:
-            # ── Text chat via DeepSeek ───────────────────────────────────────────
             raw, sid = await ds_chat(
                 prompt,
                 model=s["model"],
@@ -182,7 +176,9 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
                 files=None,
             )
             s["session_id"] = sid
-            await stream_to_message(msg, _ds_word_stream(raw))
+            stop_anim.set()
+            anim_task.cancel()
+            await send_response(msg, raw)
 
     except DeepSeekConnectionError:
         await send_error(msg, "Connection error — please try again.")
@@ -201,14 +197,16 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
                 pass
 
 
+# ── Album flusher ─────────────────────────────────────────────────────────────
+
 async def _flush_album(context: ContextTypes.DEFAULT_TYPE) -> None:
     uid, group_id = context.job.data
     items = state.album_buffer.pop(group_id, [])
     if not items:
         return
     items.sort(key=lambda x: x["mid"])
-    first_msg  = items[0]["msg"]
-    prompt     = next(
+    first_msg = items[0]["msg"]
+    prompt    = next(
         (it["caption"] for it in items if it["caption"]),
         ALBUM_ONLY_PROMPT,
     )
@@ -223,6 +221,8 @@ async def _flush_album(context: ContextTypes.DEFAULT_TYPE) -> None:
     await _process(uid, first_msg, prompt, file_paths)
 
 
+# ── Entry point ───────────────────────────────────────────────────────────────
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if not msg:
@@ -232,7 +232,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.effective_user
     asyncio.create_task(db.save_user(uid, user.username, user.first_name))
 
-    # ── Album (multiple images/docs sent together) ───────────────────────────────
     if msg.media_group_id:
         if msg.photo:
             tg_file = await msg.photo[-1].get_file()
@@ -260,7 +259,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # ── Single message ───────────────────────────────────────────────────────────
     file_paths: list[str] = []
 
     if msg.photo:
@@ -271,7 +269,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         suffix  = os.path.splitext(msg.document.file_name or "")[1] or ".bin"
         file_paths.append(await _download(tg_file, suffix))
 
-    # Smart default prompt when no caption/text given
     if file_paths and not (msg.text or msg.caption):
         prompt = IMAGE_ONLY_PROMPT
     else:
