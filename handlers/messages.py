@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes
 
 import state
 import db
+from config import DEFAULT_MODEL
 from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
 from services.duck_service import stream_chat as duck_stream, vision_chat, DuckChatError
 from lib import escape_md
@@ -18,8 +19,19 @@ logger = logging.getLogger(__name__)
 MSG_LIMIT       = 3800
 STREAM_INTERVAL = 0.8
 
-IMAGE_ONLY_PROMPT  = "Describe this image in detail."
-ALBUM_ONLY_PROMPT  = "Describe these images in detail."
+IMAGE_ONLY_PROMPT = "Describe this image in detail."
+ALBUM_ONLY_PROMPT = "Describe these images in detail."
+IMAGE_EXTS        = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".heic"}
+
+
+def _is_image(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in IMAGE_EXTS
+
+
+def _is_real_timeout(exc: Exception) -> bool:
+    """Only match genuine DeepSeek file-parsing timeouts, not generic errors."""
+    text = str(exc).lower()
+    return "timed out" in text and ("parsing" in text or "file_id" in text or "fetch" in text)
 
 
 async def _download(file_obj, suffix: str) -> str:
@@ -105,60 +117,49 @@ async def stream_to_message(msg, chunks):
                 await msg.reply_text(part)
 
 
-def _is_vision_timeout(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return "timed out" in msg or "parsing" in msg or "file" in msg
-
-
-async def _run_deepseek_vision(prompt: str, s: dict, file_paths: list) -> tuple[str, str | None]:
-    raw, sid = await ds_chat(
-        prompt,
-        model=s["model"],
-        thinking=s["thinking"],
-        search=s["search"],
-        session_id=s["session_id"],
-        files=file_paths,
-    )
-    return raw, sid
-
-
 async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
     s = state.get(uid)
-    stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(
-        _keep_typing(msg.chat, ChatAction.TYPING, stop_typing)
-    )
+
+    # Use UPLOAD_DOCUMENT animation for files, TYPING for plain text
+    anim_action = ChatAction.UPLOAD_DOCUMENT if file_paths else ChatAction.TYPING
+    stop_anim   = asyncio.Event()
+    anim_task   = asyncio.create_task(_keep_typing(msg.chat, anim_action, stop_anim))
+
     try:
         if file_paths:
-            if s["provider"] == "deepseek":
-                try:
-                    raw, sid = await _run_deepseek_vision(prompt, s, file_paths)
-                    s["session_id"] = sid
+            # ── File uploads: ALWAYS use DeepSeek for OCR / vision ──────────────
+            # Use current DS model if on deepseek, else fall back to default flash
+            ds_model   = s["model"] if s["provider"] == "deepseek" else DEFAULT_MODEL
+            all_images = all(_is_image(p) for p in file_paths)
+
+            try:
+                raw, sid = await ds_chat(
+                    prompt,
+                    model=ds_model,
+                    thinking=s.get("thinking", False),
+                    search=s["search"],
+                    session_id=s["session_id"],
+                    files=file_paths,
+                )
+                s["session_id"] = sid
+                stop_anim.set()
+                anim_task.cancel()
+                await stream_to_message(msg, _ds_word_stream(raw))
+
+            except (DeepSeekAPIError, Exception) as exc:
+                if all_images and _is_real_timeout(exc):
+                    # Real parse timeout → fallback to duck vision (images only)
+                    logger.warning("DeepSeek vision timed out — falling back to duck vision: %s", exc)
+                    stop_anim.set()
+                    anim_task.cancel()
+                    raw = await vision_chat(prompt, file_paths)
+                    s["session_id"] = None
                     await stream_to_message(msg, _ds_word_stream(raw))
-                except (DeepSeekAPIError, DeepSeekConnectionError, Exception) as exc:
-                    if _is_vision_timeout(exc) or isinstance(exc, DeepSeekConnectionError):
-                        logger.warning("DeepSeek vision failed (%s), falling back to duck vision", exc)
-                        raw = await vision_chat(prompt, file_paths)
-                        s["session_id"] = None
-                        await stream_to_message(msg, _ds_word_stream(raw))
-                    else:
-                        raise
-            else:
-                def _run_duck_vision():
-                    from duck_ai import DuckChat, ImagePart
-                    parts = [prompt] + [ImagePart.from_path(p) for p in file_paths]
-                    with DuckChat(model=s["model"]) as duck:
-                        return duck.ask(parts, web_search=s["search"])
-
-                raw = await asyncio.to_thread(_run_duck_vision)
-                s["session_id"] = None
-
-                async def _single(r=raw):
-                    yield r
-
-                await stream_to_message(msg, _single())
+                else:
+                    raise
 
         elif s["provider"] == "duck":
+            # ── Text chat via duck ───────────────────────────────────────────────
             s["session_id"] = None
             await stream_to_message(
                 msg,
@@ -169,7 +170,9 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
                     effort=s["effort"],
                 ),
             )
+
         else:
+            # ── Text chat via DeepSeek ───────────────────────────────────────────
             raw, sid = await ds_chat(
                 prompt,
                 model=s["model"],
@@ -189,8 +192,8 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
         logger.exception("Unexpected error in _process")
         await send_error(msg, f"Unexpected error: {e}")
     finally:
-        stop_typing.set()
-        typing_task.cancel()
+        stop_anim.set()
+        anim_task.cancel()
         for p in file_paths:
             try:
                 os.remove(p)
@@ -204,8 +207,8 @@ async def _flush_album(context: ContextTypes.DEFAULT_TYPE) -> None:
     if not items:
         return
     items.sort(key=lambda x: x["mid"])
-    first_msg = items[0]["msg"]
-    prompt    = next(
+    first_msg  = items[0]["msg"]
+    prompt     = next(
         (it["caption"] for it in items if it["caption"]),
         ALBUM_ONLY_PROMPT,
     )
@@ -229,6 +232,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.effective_user
     asyncio.create_task(db.save_user(uid, user.username, user.first_name))
 
+    # ── Album (multiple images/docs sent together) ───────────────────────────────
     if msg.media_group_id:
         if msg.photo:
             tg_file = await msg.photo[-1].get_file()
@@ -256,6 +260,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    # ── Single message ───────────────────────────────────────────────────────────
     file_paths: list[str] = []
 
     if msg.photo:
@@ -266,9 +271,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         suffix  = os.path.splitext(msg.document.file_name or "")[1] or ".bin"
         file_paths.append(await _download(tg_file, suffix))
 
+    # Smart default prompt when no caption/text given
     if file_paths and not (msg.text or msg.caption):
         prompt = IMAGE_ONLY_PROMPT
     else:
-        prompt = msg.text or msg.caption or "Describe this"
+        prompt = msg.text or msg.caption or ""
 
     asyncio.create_task(_process(uid, msg, prompt, file_paths))
