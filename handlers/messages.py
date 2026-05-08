@@ -10,13 +10,16 @@ from telegram.ext import ContextTypes
 import state
 import db
 from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
-from services.duck_service import stream_chat as duck_stream, DuckChatError
+from services.duck_service import stream_chat as duck_stream, vision_chat, DuckChatError
 from lib import escape_md
 
 logger = logging.getLogger(__name__)
 
 MSG_LIMIT       = 3800
 STREAM_INTERVAL = 0.8
+
+IMAGE_ONLY_PROMPT  = "Describe this image in detail."
+ALBUM_ONLY_PROMPT  = "Describe these images in detail."
 
 
 async def _download(file_obj, suffix: str) -> str:
@@ -102,6 +105,23 @@ async def stream_to_message(msg, chunks):
                 await msg.reply_text(part)
 
 
+def _is_vision_timeout(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "timed out" in msg or "parsing" in msg or "file" in msg
+
+
+async def _run_deepseek_vision(prompt: str, s: dict, file_paths: list) -> tuple[str, str | None]:
+    raw, sid = await ds_chat(
+        prompt,
+        model=s["model"],
+        thinking=s["thinking"],
+        search=s["search"],
+        session_id=s["session_id"],
+        files=file_paths,
+    )
+    return raw, sid
+
+
 async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
     s = state.get(uid)
     stop_typing = asyncio.Event()
@@ -109,34 +129,46 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
         _keep_typing(msg.chat, ChatAction.TYPING, stop_typing)
     )
     try:
-        if s["provider"] == "duck":
-            if file_paths:
-                from duck_ai import DuckChat, ImagePart
-
-                def _run_vision():
+        if file_paths:
+            if s["provider"] == "deepseek":
+                try:
+                    raw, sid = await _run_deepseek_vision(prompt, s, file_paths)
+                    s["session_id"] = sid
+                    await stream_to_message(msg, _ds_word_stream(raw))
+                except (DeepSeekAPIError, DeepSeekConnectionError, Exception) as exc:
+                    if _is_vision_timeout(exc) or isinstance(exc, DeepSeekConnectionError):
+                        logger.warning("DeepSeek vision failed (%s), falling back to duck vision", exc)
+                        raw = await vision_chat(prompt, file_paths)
+                        s["session_id"] = None
+                        await stream_to_message(msg, _ds_word_stream(raw))
+                    else:
+                        raise
+            else:
+                def _run_duck_vision():
+                    from duck_ai import DuckChat, ImagePart
                     parts = [prompt] + [ImagePart.from_path(p) for p in file_paths]
                     with DuckChat(model=s["model"]) as duck:
                         return duck.ask(parts, web_search=s["search"])
 
-                raw = await asyncio.to_thread(_run_vision)
+                raw = await asyncio.to_thread(_run_duck_vision)
                 s["session_id"] = None
 
-                async def _single_chunk():
-                    yield raw
+                async def _single(r=raw):
+                    yield r
 
-                await stream_to_message(msg, _single_chunk())
-            else:
-                s["session_id"] = None
-                await stream_to_message(
-                    msg,
-                    duck_stream(
-                        prompt,
-                        model=s["model"],
-                        search=s["search"],
-                        effort=s["effort"],
-                    ),
-                )
+                await stream_to_message(msg, _single())
 
+        elif s["provider"] == "duck":
+            s["session_id"] = None
+            await stream_to_message(
+                msg,
+                duck_stream(
+                    prompt,
+                    model=s["model"],
+                    search=s["search"],
+                    effort=s["effort"],
+                ),
+            )
         else:
             raw, sid = await ds_chat(
                 prompt,
@@ -144,7 +176,7 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
                 thinking=s["thinking"],
                 search=s["search"],
                 session_id=s["session_id"],
-                files=file_paths or None,
+                files=None,
             )
             s["session_id"] = sid
             await stream_to_message(msg, _ds_word_stream(raw))
@@ -173,7 +205,10 @@ async def _flush_album(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     items.sort(key=lambda x: x["mid"])
     first_msg = items[0]["msg"]
-    prompt    = next((it["caption"] for it in items if it["caption"]), "Describe these images")
+    prompt    = next(
+        (it["caption"] for it in items if it["caption"]),
+        ALBUM_ONLY_PROMPT,
+    )
 
     file_paths: list[str] = []
     for it in items:
@@ -221,7 +256,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    prompt     = msg.text or msg.caption or "Describe this"
     file_paths: list[str] = []
 
     if msg.photo:
@@ -231,5 +265,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         tg_file = await msg.document.get_file()
         suffix  = os.path.splitext(msg.document.file_name or "")[1] or ".bin"
         file_paths.append(await _download(tg_file, suffix))
+
+    if file_paths and not (msg.text or msg.caption):
+        prompt = IMAGE_ONLY_PROMPT
+    else:
+        prompt = msg.text or msg.caption or "Describe this"
 
     asyncio.create_task(_process(uid, msg, prompt, file_paths))

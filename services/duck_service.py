@@ -3,10 +3,13 @@ import os
 import tempfile
 import threading
 import logging
-from duck_ai import DuckChat, DuckChatError, image_generation
+from duck_ai import DuckChat, DuckChatError, ImagePart, image_generation, gpt5_mini
 from config import DUCK_EFFORT_MODELS
 
-__all__ = ["chat", "stream_chat", "generate_image", "edit_image", "DuckChatError"]
+__all__ = [
+    "chat", "stream_chat", "vision_chat",
+    "generate_image", "edit_image", "DuckChatError",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,14 @@ async def stream_chat(
             yield value
 
 
+async def vision_chat(prompt: str, image_paths: list[str]) -> str:
+    def _run():
+        parts = [prompt] + [ImagePart.from_path(p) for p in image_paths]
+        with DuckChat(model=gpt5_mini) as duck:
+            return duck.ask(parts)
+    return await asyncio.to_thread(_run)
+
+
 async def generate_image(prompt: str) -> str:
     def _run():
         fd, path = tempfile.mkstemp(suffix=".jpg")
@@ -77,7 +88,7 @@ async def edit_image(caption: str, image_path: str) -> str:
     def _run():
         fd, path = tempfile.mkstemp(suffix=".jpg")
         os.close(fd)
-        logger.info("Editing image %s with caption: %s", image_path, caption[:60])
+        logger.info("Editing image %s | caption: %s", image_path, caption[:60])
         with DuckChat(model=image_generation) as duck:
             duck.edit_image(caption, image_path, save_to=path)
         logger.info("Image edited: %s", path)
