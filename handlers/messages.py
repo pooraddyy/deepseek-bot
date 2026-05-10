@@ -14,11 +14,13 @@ from lib import escape_md
 
 logger = logging.getLogger(__name__)
 
-TG_LIMIT           = 4096
-SAFE_LIMIT         = TG_LIMIT - 100
-IMAGE_ONLY_PROMPT  = "Describe this image in detail."
-ALBUM_ONLY_PROMPT  = "Describe these images in detail."
-DOC_ONLY_PROMPT    = "Analyse this file and summarise its contents in detail."
+TG_LIMIT          = 4096
+SAFE_LIMIT        = TG_LIMIT - 100
+IMAGE_ONLY_PROMPT = "Describe this image in detail."
+ALBUM_ONLY_PROMPT = "Describe these images in detail."
+DOC_ONLY_PROMPT   = "Analyse this file and summarise its contents in detail."
+NO_TEXT_IMAGE     = "Is image mein koi bhi readable text nahi mila."
+NO_TEXT_DOC       = "Is file mein koi bhi readable content nahi mila."
 
 
 def _split_text(text: str) -> list[str]:
@@ -109,14 +111,17 @@ async def _process(uid: int, msg, prompt: str, file_paths: list, is_document: bo
         s["session_id"] = sid
         stop_anim.set()
         anim_task.cancel()
-        await send_response(msg, raw)
+        if not raw.strip() and file_paths:
+            await msg.reply_text(NO_TEXT_DOC if is_document else NO_TEXT_IMAGE)
+        else:
+            await send_response(msg, raw)
     except DeepSeekConnectionError:
         await send_error(msg, "Connection error — please try again.")
-    except DeepSeekAPIError as e:
-        await send_error(msg, f"API error: {e}")
-    except Exception as e:
+    except DeepSeekAPIError:
+        await send_error(msg, "DeepSeek API error — please try again later.")
+    except Exception:
         logger.exception("Unexpected error in _process")
-        await send_error(msg, f"Unexpected error: {e}")
+        await send_error(msg, "Kuch gadbad ho gayi — please try again.")
     finally:
         stop_anim.set()
         anim_task.cancel()
@@ -134,22 +139,16 @@ async def _flush_album(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     items.sort(key=lambda x: x["mid"])
     first_msg = items[0]["msg"]
-
-    # Use the first non-empty caption, or a sensible default based on content type
-    caption = next((it["caption"] for it in items if it["caption"]), "")
-    has_doc  = any(it.get("is_document") for it in items)
-    if not caption:
-        prompt = DOC_ONLY_PROMPT if has_doc else ALBUM_ONLY_PROMPT
-    else:
-        prompt = caption
-
+    caption   = next((it["caption"] for it in items if it["caption"]), "")
+    has_doc   = any(it.get("is_document") for it in items)
+    prompt    = caption if caption else (DOC_ONLY_PROMPT if has_doc else ALBUM_ONLY_PROMPT)
     file_paths: list[str] = []
     for it in items:
         try:
             file_paths.append(await _download(it["tg_file"], it["suffix"]))
         except Exception:
             logger.exception("Failed to download album item")
-    await _process(uid, first_msg, prompt, file_paths)
+    await _process(uid, first_msg, prompt, file_paths, is_document=has_doc)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -159,10 +158,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     uid  = update.effective_user.id
     user = update.effective_user
     asyncio.create_task(db.save_user(uid, user.username, user.first_name))
-
     raw_caption = (msg.caption or "").strip()
-
-    # --- Album (media group) handling ---
     if msg.media_group_id:
         is_document = False
         if msg.photo:
@@ -191,11 +187,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             name=f"album:{msg.media_group_id}",
         )
         return
-
-    # --- Single message handling ---
     file_paths: list[str] = []
     is_document = False
-
     if msg.photo:
         tg_file = await msg.photo[-1].get_file()
         file_paths.append(await _download(tg_file, ".jpg"))
@@ -204,13 +197,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         suffix      = os.path.splitext(msg.document.file_name or "")[1] or ".bin"
         file_paths.append(await _download(tg_file, suffix))
         is_document = True
-
     user_text = (msg.text or raw_caption or "").strip()
-
     if file_paths and not user_text:
-        # No caption / text — use a sensible default based on file type
         prompt = DOC_ONLY_PROMPT if is_document else IMAGE_ONLY_PROMPT
     else:
         prompt = user_text
-
     asyncio.create_task(_process(uid, msg, prompt, file_paths, is_document=is_document))
