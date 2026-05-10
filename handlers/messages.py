@@ -120,7 +120,7 @@ async def _process(uid: int, msg, prompt: str, file_paths: list, is_document: bo
         await send_error(msg, "DeepSeek API error — please try again later.")
     except Exception:
         logger.exception("Unexpected error in _process")
-        await send_error(msg, "Kuch gadbad ho gayi — please try again.")
+        await send_error(msg, "Something went wrong — please try again.")
     finally:
         stop_anim.set()
         anim_task.cancel()
