@@ -40,8 +40,8 @@ A powerful Telegram bot powered by **DeepSeek AI** — web search, image reading
 
 | Model | Label | Best for |
 |---|---|---|
-| `deepseek-v4-flash` | 🔵 Flash | Fast replies, everyday chat, code — **default** |
-| `deepseek-v4-pro` | 🔴 Pro | Complex reasoning, maths, long documents, research |
+| `deepseek-v4-flash` | Flash | Fast replies, everyday chat, code — **default** |
+| `deepseek-v4-pro` | Pro | Complex reasoning, maths, long documents, research |
 
 ---
 
@@ -51,7 +51,7 @@ A powerful Telegram bot powered by **DeepSeek AI** — web search, image reading
 |---|---|
 | `/start` | Greet and restore saved settings |
 | `/help` | Show all commands with formatting |
-| `/deep` | Switch between Flash 🔵 and Pro 🔴 |
+| `/deep` | Switch between Flash and Pro |
 | `/think` | Toggle DeepSeek reasoning mode on / off |
 | `/web <query>` | One-off forced web search |
 | `/search` | Toggle web search on / off for all messages |
