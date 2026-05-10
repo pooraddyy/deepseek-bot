@@ -20,16 +20,5 @@ DEEPSEEK_MODELS: dict[str, str] = {
     "deepseek-v4-pro":   "Pro",
 }
 
-DUCK_CHAT_MODELS: dict[str, str] = {
-    "gpt4":      "GPT-4o Mini",
-    "gpt5_mini": "GPT-5 Mini",
-    "claude":    "Claude Haiku",
-    "llama":     "Llama 4",
-    "mistral":   "Mistral",
-    "gpt-oss":   "GPT-OSS 120B",
-}
-
-DUCK_EFFORT_MODELS: set[str] = {"gpt5_mini", "claude", "gpt-oss"}
-
 DEFAULT_PROVIDER = "deepseek"
 DEFAULT_MODEL    = "deepseek-v4-flash"

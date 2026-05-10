@@ -9,9 +9,7 @@ from telegram.ext import ContextTypes
 
 import state
 import db
-from config import DEFAULT_MODEL
 from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
-from services.duck_service import stream_chat as duck_stream, edit_image, DuckChatError
 from lib import escape_md
 
 logger = logging.getLogger(__name__)
@@ -20,17 +18,9 @@ TG_LIMIT          = 4096
 SAFE_LIMIT        = TG_LIMIT - 100
 IMAGE_ONLY_PROMPT = "Describe this image in detail."
 ALBUM_ONLY_PROMPT = "Describe these images in detail."
-IMAGE_EXTS        = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".heic"}
-
-
-# ── Utilities ─────────────────────────────────────────────────────────────────
-
-def _is_image(path: str) -> bool:
-    return os.path.splitext(path)[1].lower() in IMAGE_EXTS
 
 
 def _split_text(text: str) -> list[str]:
-    """Split into Telegram-safe chunks (≤ SAFE_LIMIT chars) at natural boundaries."""
     if len(text) <= SAFE_LIMIT:
         return [text]
     parts: list[str] = []
@@ -51,7 +41,6 @@ def _split_text(text: str) -> list[str]:
 
 
 async def send_response(msg, text: str) -> None:
-    """Send full AI reply, splitting at 4096, trying MarkdownV2 then plain text."""
     if not text:
         text = "(empty response)"
     for part in _split_text(text):
@@ -101,93 +90,29 @@ async def _keep_typing(chat, action: str = ChatAction.TYPING, stop_event: asynci
         await asyncio.sleep(4)
 
 
-# ── /imgedit via caption (PTB doesn't route caption commands to CommandHandler) ─
-
-async def _run_imgedit(msg, caption: str, src_path: str) -> None:
-    """Handle imgedit when user sends a photo with /imgedit <caption> as the caption."""
-    stop_anim = asyncio.Event()
-    anim_task = asyncio.create_task(_keep_typing(msg.chat, ChatAction.UPLOAD_DOCUMENT, stop_anim))
-    out_path  = None
-    try:
-        out_path = await edit_image(caption, src_path)
-        stop_anim.set()
-        anim_task.cancel()
-        with open(out_path, "rb") as f:
-            await msg.reply_photo(f)
-    except DuckChatError as e:
-        await send_error(msg, f"Image edit error: {e}")
-    except Exception as e:
-        logger.exception("_run_imgedit error")
-        await send_error(msg, f"Unexpected error: {e}")
-    finally:
-        stop_anim.set()
-        anim_task.cancel()
-        for p in [src_path, out_path]:
-            if p:
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
-
-
-# ── Core message processor ────────────────────────────────────────────────────
-
 async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
     s = state.get(uid)
-
     anim_action = ChatAction.UPLOAD_DOCUMENT if file_paths else ChatAction.TYPING
     stop_anim   = asyncio.Event()
     anim_task   = asyncio.create_task(_keep_typing(msg.chat, anim_action, stop_anim))
 
     try:
-        if file_paths:
-            # Always use DeepSeek for OCR/vision regardless of current provider
-            ds_model = s["model"] if s["provider"] == "deepseek" else DEFAULT_MODEL
-
-            raw, sid = await ds_chat(
-                prompt,
-                model=ds_model,
-                thinking=s.get("thinking", False),
-                search=s["search"],
-                session_id=s["session_id"],
-                files=file_paths,
-            )
-            s["session_id"] = sid
-            stop_anim.set()
-            anim_task.cancel()
-            await send_response(msg, raw)
-
-        elif s["provider"] == "duck":
-            s["session_id"] = None
-            raw = await _collect_duck(
-                duck_stream(
-                    prompt,
-                    model=s["model"],
-                    search=s["search"],
-                    effort=s["effort"],
-                )
-            )
-            stop_anim.set()
-            anim_task.cancel()
-            await send_response(msg, raw)
-
-        else:
-            raw, sid = await ds_chat(
-                prompt,
-                model=s["model"],
-                thinking=s["thinking"],
-                search=s["search"],
-                session_id=s["session_id"],
-                files=None,
-            )
-            s["session_id"] = sid
-            stop_anim.set()
-            anim_task.cancel()
-            await send_response(msg, raw)
+        raw, sid = await ds_chat(
+            prompt,
+            model=s["model"],
+            thinking=s["thinking"],
+            search=s["search"],
+            session_id=s["session_id"],
+            files=file_paths or None,
+        )
+        s["session_id"] = sid
+        stop_anim.set()
+        anim_task.cancel()
+        await send_response(msg, raw)
 
     except DeepSeekConnectionError:
         await send_error(msg, "Connection error — please try again.")
-    except (DeepSeekAPIError, DuckChatError) as e:
+    except DeepSeekAPIError as e:
         await send_error(msg, f"API error: {e}")
     except Exception as e:
         logger.exception("Unexpected error in _process")
@@ -201,8 +126,6 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
             except OSError:
                 pass
 
-
-# ── Album flusher ─────────────────────────────────────────────────────────────
 
 async def _flush_album(context: ContextTypes.DEFAULT_TYPE) -> None:
     uid, group_id = context.job.data
@@ -224,8 +147,6 @@ async def _flush_album(context: ContextTypes.DEFAULT_TYPE) -> None:
     await _process(uid, first_msg, prompt, file_paths)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if not msg:
@@ -237,7 +158,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     raw_caption = (msg.caption or "").strip()
 
-    # ── Album ────────────────────────────────────────────────────────────────
     if msg.media_group_id:
         if msg.photo:
             tg_file = await msg.photo[-1].get_file()
@@ -264,24 +184,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # ── Caption command: photo + /imgedit <caption> ─────────────────────────
-    # PTB v22 CommandHandler does NOT route photos with caption-based commands,
-    # so we detect and handle /imgedit here instead.
-    if msg.photo and raw_caption.lower().startswith("/imgedit"):
-        edit_text = raw_caption[len("/imgedit"):].split("@")[0].strip()
-        if not edit_text:
-            sent = await msg.reply_text(
-                "Please provide an edit description after /imgedit.\n"
-                "Example: send photo with caption  /imgedit make it black and white"
-            )
-            asyncio.create_task(_delete_after(sent, 6))
-            return
-        tg_file  = await msg.photo[-1].get_file()
-        src_path = await _download(tg_file, ".jpg")
-        asyncio.create_task(_run_imgedit(msg, edit_text, src_path))
-        return
-
-    # ── Normal photo / document / text ───────────────────────────────────────
     file_paths: list[str] = []
 
     if msg.photo:

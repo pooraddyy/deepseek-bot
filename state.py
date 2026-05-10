@@ -1,15 +1,13 @@
 from collections import defaultdict
-from config import DEFAULT_MODEL, DEFAULT_PROVIDER
+from config import DEFAULT_MODEL
 
 
 def _default_state() -> dict:
     return {
         "session_id": None,
-        "provider":   DEFAULT_PROVIDER,
         "model":      DEFAULT_MODEL,
         "thinking":   False,
         "search":     False,
-        "effort":     "fast",
     }
 
 

@@ -20,11 +20,9 @@ async def save_state(uid: int, s: dict) -> None:
         {"uid": uid},
         {"$set": {
             "uid":      uid,
-            "provider": s["provider"],
             "model":    s["model"],
             "search":   s["search"],
             "thinking": s["thinking"],
-            "effort":   s["effort"],
         }},
         upsert=True,
     )
@@ -34,10 +32,8 @@ async def load_state(uid: int) -> dict | None:
     doc = await state_col.find_one({"uid": uid})
     if doc:
         return {
-            "provider": doc.get("provider", "deepseek"),
-            "model":    doc.get("model"),
+            "model":    doc.get("model", "deepseek-v4-flash"),
             "search":   doc.get("search", False),
             "thinking": doc.get("thinking", False),
-            "effort":   doc.get("effort", "fast"),
         }
     return None

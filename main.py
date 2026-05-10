@@ -21,12 +21,8 @@ from handlers.commands import (
     cmd_reset,
     cmd_status,
     cmd_deep,
-    cmd_duck,
-    cmd_mode,
     cmd_search,
     cmd_web,
-    cmd_imggen,
-    cmd_imgedit,
 )
 from handlers.messages import handle_message
 
@@ -38,17 +34,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_COMMANDS = [
-    BotCommand("start",   "Start the bot"),
-    BotCommand("help",    "Show all commands"),
-    BotCommand("deep",    "Switch to a DeepSeek model"),
-    BotCommand("duck",    "Switch to a DuckDuckGo AI model"),
-    BotCommand("imggen",  "Generate an image from a prompt"),
-    BotCommand("imgedit", "Edit a photo with a caption"),
-    BotCommand("web",     "Force a one-off web search"),
-    BotCommand("search",  "Toggle web search on / off"),
-    BotCommand("mode",    "Switch Fast / Reasoning mode"),
-    BotCommand("status",  "Show current model and settings"),
-    BotCommand("reset",   "Clear the current conversation"),
+    BotCommand("start",  "Start the bot"),
+    BotCommand("help",   "Show all commands"),
+    BotCommand("deep",   "Switch DeepSeek model (Flash / Pro)"),
+    BotCommand("web",    "Force a one-off web search"),
+    BotCommand("search", "Toggle web search on / off"),
+    BotCommand("status", "Show current model and settings"),
+    BotCommand("reset",  "Clear the current conversation"),
 ]
 
 
@@ -77,17 +69,13 @@ async def start_bot() -> None:
         .build()
     )
 
-    app.add_handler(CommandHandler("start",   cmd_start))
-    app.add_handler(CommandHandler("help",    cmd_help))
-    app.add_handler(CommandHandler("reset",   cmd_reset))
-    app.add_handler(CommandHandler("status",  cmd_status))
-    app.add_handler(CommandHandler("deep",    cmd_deep))
-    app.add_handler(CommandHandler("duck",    cmd_duck))
-    app.add_handler(CommandHandler("mode",    cmd_mode))
-    app.add_handler(CommandHandler("search",  cmd_search))
-    app.add_handler(CommandHandler("web",     cmd_web))
-    app.add_handler(CommandHandler("imggen",  cmd_imggen))
-    app.add_handler(CommandHandler("imgedit", cmd_imgedit))
+    app.add_handler(CommandHandler("start",  cmd_start))
+    app.add_handler(CommandHandler("help",   cmd_help))
+    app.add_handler(CommandHandler("reset",  cmd_reset))
+    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("deep",   cmd_deep))
+    app.add_handler(CommandHandler("search", cmd_search))
+    app.add_handler(CommandHandler("web",    cmd_web))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(
         MessageHandler(
