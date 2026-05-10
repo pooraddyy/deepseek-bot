@@ -14,10 +14,11 @@ from lib import escape_md
 
 logger = logging.getLogger(__name__)
 
-TG_LIMIT          = 4096
-SAFE_LIMIT        = TG_LIMIT - 100
-IMAGE_ONLY_PROMPT = "Describe this image in detail."
-ALBUM_ONLY_PROMPT = "Describe these images in detail."
+TG_LIMIT           = 4096
+SAFE_LIMIT         = TG_LIMIT - 100
+IMAGE_ONLY_PROMPT  = "Describe this image in detail."
+ALBUM_ONLY_PROMPT  = "Describe these images in detail."
+DOC_ONLY_PROMPT    = "Analyse this file and summarise its contents in detail."
 
 
 def _split_text(text: str) -> list[str]:
@@ -91,7 +92,7 @@ async def _keep_typing(chat, action: str = ChatAction.TYPING, stop_event: asynci
         await asyncio.sleep(4)
 
 
-async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
+async def _process(uid: int, msg, prompt: str, file_paths: list, is_document: bool = False) -> None:
     s = state.get(uid)
     anim_action = ChatAction.UPLOAD_DOCUMENT if file_paths else ChatAction.TYPING
     stop_anim   = asyncio.Event()
@@ -133,10 +134,15 @@ async def _flush_album(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     items.sort(key=lambda x: x["mid"])
     first_msg = items[0]["msg"]
-    prompt    = next(
-        (it["caption"] for it in items if it["caption"]),
-        ALBUM_ONLY_PROMPT,
-    )
+
+    # Use the first non-empty caption, or a sensible default based on content type
+    caption = next((it["caption"] for it in items if it["caption"]), "")
+    has_doc  = any(it.get("is_document") for it in items)
+    if not caption:
+        prompt = DOC_ONLY_PROMPT if has_doc else ALBUM_ONLY_PROMPT
+    else:
+        prompt = caption
+
     file_paths: list[str] = []
     for it in items:
         try:
@@ -153,22 +159,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     uid  = update.effective_user.id
     user = update.effective_user
     asyncio.create_task(db.save_user(uid, user.username, user.first_name))
+
     raw_caption = (msg.caption or "").strip()
+
+    # --- Album (media group) handling ---
     if msg.media_group_id:
+        is_document = False
         if msg.photo:
             tg_file = await msg.photo[-1].get_file()
             suffix  = ".jpg"
         elif msg.document:
-            tg_file = await msg.document.get_file()
-            suffix  = os.path.splitext(msg.document.file_name or "")[1] or ".bin"
+            tg_file     = await msg.document.get_file()
+            suffix      = os.path.splitext(msg.document.file_name or "")[1] or ".bin"
+            is_document = True
         else:
             return
         state.album_buffer[msg.media_group_id].append({
-            "mid":     msg.message_id,
-            "msg":     msg,
-            "tg_file": tg_file,
-            "suffix":  suffix,
-            "caption": raw_caption,
+            "mid":         msg.message_id,
+            "msg":         msg,
+            "tg_file":     tg_file,
+            "suffix":      suffix,
+            "caption":     raw_caption,
+            "is_document": is_document,
         })
         for job in context.job_queue.get_jobs_by_name(f"album:{msg.media_group_id}"):
             job.schedule_removal()
@@ -179,16 +191,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             name=f"album:{msg.media_group_id}",
         )
         return
+
+    # --- Single message handling ---
     file_paths: list[str] = []
+    is_document = False
+
     if msg.photo:
         tg_file = await msg.photo[-1].get_file()
         file_paths.append(await _download(tg_file, ".jpg"))
     elif msg.document:
-        tg_file = await msg.document.get_file()
-        suffix  = os.path.splitext(msg.document.file_name or "")[1] or ".bin"
+        tg_file     = await msg.document.get_file()
+        suffix      = os.path.splitext(msg.document.file_name or "")[1] or ".bin"
         file_paths.append(await _download(tg_file, suffix))
-    if file_paths and not (msg.text or raw_caption):
-        prompt = IMAGE_ONLY_PROMPT
+        is_document = True
+
+    user_text = (msg.text or raw_caption or "").strip()
+
+    if file_paths and not user_text:
+        # No caption / text — use a sensible default based on file type
+        prompt = DOC_ONLY_PROMPT if is_document else IMAGE_ONLY_PROMPT
     else:
-        prompt = msg.text or raw_caption or ""
-    asyncio.create_task(_process(uid, msg, prompt, file_paths))
+        prompt = user_text
+
+    asyncio.create_task(_process(uid, msg, prompt, file_paths, is_document=is_document))
