@@ -1,23 +1,38 @@
-# DeepSeek Telegram Bot
+<div align="center">
 
-A fully-featured Telegram bot powered by **DeepSeek AI** — supports web search, image and document reading, code generation, and multi-turn conversations with per-user session memory.
+<img src="https://img.shields.io/badge/DeepSeek-Telegram%20Bot-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" alt="DeepSeek Telegram Bot"/>
 
-Built using [p2d-deepseek](https://github.com/pooraddyy/deepseek-free) — an unofficial free Python client for DeepSeek that works with just your **browser auth token**. No paid API key needed.
+<br/><br/>
+
+A powerful Telegram bot powered by **DeepSeek AI** — web search, image reading, document OCR, code generation, reasoning mode, and multi-turn conversations. No paid API key needed — just your browser auth token.
+
+<br/>
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/pooraddyy/deepseek-bot)
+
+<br/>
+
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
+![PTB](https://img.shields.io/badge/python--telegram--bot-22.x-blue?style=flat-square)
+![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?style=flat-square&logo=mongodb&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+
+</div>
 
 ---
 
-## What this bot can do
+## Features
 
 | Capability | Details |
 |---|---|
 | **Chat** | Multi-turn conversation with full memory per user |
 | **Web Search** | Real-time web results via `/search` toggle or `/web` one-off |
-| **Image Reading** | Send any photo — the bot describes, analyses, or answers questions about it |
-| **Document OCR** | Upload PDFs, Word docs, Excel sheets, code files, CSVs — the bot reads and responds |
-| **Code Generation** | Ask for code in any language — generates, explains, and debugs |
+| **Thinking Mode** | DeepSeek chain-of-thought reasoning via `/think` |
+| **Image Reading** | Send any photo — bot describes, analyses, or answers questions |
+| **Document OCR** | Upload PDFs, Word docs, Excel sheets, code files, CSVs |
+| **Code Generation** | Ask for code in any language — generates, explains, debugs |
 | **Album Support** | Send multiple photos or documents at once — all processed together |
-| **Model Switching** | Flash (fast) or Pro (deeper reasoning) via `/deep` |
-| **Persistent Settings** | Model preference and search toggle saved per user in MongoDB |
+| **Persistent Settings** | Model, thinking, and search toggle saved per user in MongoDB |
 
 ---
 
@@ -25,8 +40,8 @@ Built using [p2d-deepseek](https://github.com/pooraddyy/deepseek-free) — an un
 
 | Model | Label | Best for |
 |---|---|---|
-| `deepseek-v4-flash` | Flash | Fast replies, everyday chat, code — **default** |
-| `deepseek-v4-pro` | Pro | Complex reasoning, maths, long documents, research |
+| `deepseek-v4-flash` | 🔵 Flash | Fast replies, everyday chat, code — **default** |
+| `deepseek-v4-pro` | 🔴 Pro | Complex reasoning, maths, long documents, research |
 
 ---
 
@@ -35,120 +50,117 @@ Built using [p2d-deepseek](https://github.com/pooraddyy/deepseek-free) — an un
 | Command | Action |
 |---|---|
 | `/start` | Greet and restore saved settings |
-| `/help` | Show all commands |
-| `/deep` | Switch between DeepSeek Flash and Pro |
+| `/help` | Show all commands with formatting |
+| `/deep` | Switch between Flash 🔵 and Pro 🔴 |
+| `/think` | Toggle DeepSeek reasoning mode on / off |
 | `/web <query>` | One-off forced web search |
 | `/search` | Toggle web search on / off for all messages |
-| `/status` | Show current model and settings |
+| `/status` | Show current model, thinking, and search state |
 | `/reset` | Clear conversation history |
 
 ---
 
-## Setup
+## Getting your DeepSeek AUTH\_TOKEN
 
-### 1. Clone the repo
-
-```bash
-git clone https://github.com/pooraddyy/deepseek-bot.git
-cd deepseek-bot
-```
-
-### 2. Install dependencies
-
-```bash
-pip install -r bot/requirements.txt
-```
-
-### 3. Configure environment
-
-Copy `bot/sample.env` to `bot/.env` and fill in your values:
-
-```bash
-cp bot/sample.env bot/.env
-```
-
-```env
-BOT_TOKEN=your_telegram_bot_token_here
-AUTH_TOKEN=your_deepseek_auth_token_here
-MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority
-PORT=8000
-```
-
-- **BOT_TOKEN** — get from [@BotFather](https://t.me/BotFather) on Telegram
-- **AUTH_TOKEN** — your DeepSeek auth token (see section below — no paid API key needed)
-- **MONGODB_URL** — MongoDB Atlas connection string (free tier works)
-
-### 4. Run
-
-```bash
-cd bot
-python main.py
-```
-
----
-
-## Getting your DeepSeek AUTH_TOKEN
-
-This bot uses [p2d-deepseek](https://github.com/pooraddyy/deepseek-free) — an unofficial client that authenticates with DeepSeek using your **browser session token**, the same one DeepSeek's own website uses. This means you get full DeepSeek access completely free — no API subscription required.
+This bot uses [p2d-deepseek](https://github.com/pooraddyy/deepseek-free) — a free unofficial client that uses your **browser session token**. No API subscription required.
 
 ### Method 1 — LocalStorage (Fastest, Desktop)
 
 1. Go to [chat.deepseek.com](https://chat.deepseek.com) and log in
-2. Press `F12` to open DevTools
-3. Go to the **Application** tab (click `»` if hidden)
-4. In the left sidebar: **Local Storage** → `https://chat.deepseek.com`
-5. Find the key `userToken` and copy its **value** — that is your `AUTH_TOKEN`
+2. Press `F12` → **Application** tab → **Local Storage** → `https://chat.deepseek.com`
+3. Find the key `userToken` and copy its value
 
 ### Method 2 — Network Tab (Desktop)
 
 1. Go to [chat.deepseek.com](https://chat.deepseek.com) and log in
-2. Open DevTools → **Network** tab
-3. Send any message in the chat
-4. Click any request going to `chat.deepseek.com`
-5. Open **Headers** → find the `authorization` header
-6. Copy the value **without** the `Bearer ` prefix
+2. Open DevTools → **Network** tab → send any message
+3. Click any request to `chat.deepseek.com` → **Headers** → copy the `authorization` value (without `Bearer `)
 
 ### Method 3 — Kiwi Browser (Android)
 
-1. Install [Kiwi Browser](https://play.google.com/store/apps/details?id=com.kiwibrowser.browser) from the Play Store
+1. Install [Kiwi Browser](https://play.google.com/store/apps/details?id=com.kiwibrowser.browser)
 2. Open [chat.deepseek.com](https://chat.deepseek.com) and log in
-3. Tap menu (⋮) → **Developer Tools**
-4. Go to **Application** tab → **Local Storage** → `https://chat.deepseek.com`
-5. Find `userToken` and copy its **value**
+3. Menu (⋮) → **Developer Tools** → **Application** → **Local Storage**
+4. Find `userToken` and copy the value
 
-> **Token expired?** Tokens expire when your DeepSeek session ends or you log out. Just repeat any method above to get a fresh one.
+> Token expired? Just repeat any method above after logging back in.
+
+---
+
+## Deploy
+
+### Run Locally
+
+```bash
+git clone https://github.com/pooraddyy/deepseek-bot.git
+cd deepseek-bot
+pip install -r requirements.txt
+cp sample.env .env
+# Fill in .env, then:
+python main.py
+```
+
+### Docker
+
+```bash
+git clone https://github.com/pooraddyy/deepseek-bot.git
+cd deepseek-bot
+cp sample.env .env
+# Fill in .env, then:
+docker build -t deepseek-bot .
+docker run --env-file .env deepseek-bot
+```
+
+### Render
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/pooraddyy/deepseek-bot)
+
+1. Click the button above
+2. Set the environment variables: `BOT_TOKEN`, `AUTH_TOKEN`, `MONGODB_URL`
+3. Click **Deploy**
+
+### Railway
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?template=https://github.com/pooraddyy/deepseek-bot)
+
+1. Click **Deploy on Railway**
+2. Add environment variables in the Railway dashboard
+3. Railway auto-detects Python and runs `python main.py`
+
+### Heroku
+
+```bash
+git clone https://github.com/pooraddyy/deepseek-bot.git
+cd deepseek-bot
+heroku create your-bot-name
+heroku config:set BOT_TOKEN=... AUTH_TOKEN=... MONGODB_URL=...
+echo "worker: python main.py" > Procfile
+git add Procfile && git commit -m "add Procfile"
+git push heroku main
+heroku ps:scale worker=1
+```
+
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `BOT_TOKEN` | ✅ | Telegram Bot Token from [@BotFather](https://t.me/BotFather) |
+| `AUTH_TOKEN` | ✅ | DeepSeek browser auth token (see above — free, no API key) |
+| `MONGODB_URL` | ✅ | MongoDB Atlas connection string |
+| `PORT` | ❌ | Health check port (default: `8000`) |
+
+Copy `sample.env` to `.env` and fill in the values.
 
 ---
 
 ## Built with
 
-- [p2d-deepseek](https://github.com/pooraddyy/deepseek-free) — free unofficial DeepSeek Python client (auth token, no API key)
+- [p2d-deepseek](https://github.com/pooraddyy/deepseek-free) — free unofficial DeepSeek Python client
 - [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) v22
 - [Motor](https://motor.readthedocs.io/) — async MongoDB driver
-- [aiohttp](https://docs.aiohttp.org/) — lightweight health check server
-
----
-
-## Project structure
-
-```
-bot/
-├── main.py                  # Entry point, handler registration, health server
-├── config.py                # Env vars, model definitions
-├── state.py                 # In-memory per-user state
-├── db.py                    # MongoDB persistence (users + settings)
-├── keyboards.py             # Inline keyboards (model picker)
-├── sample.env               # Template env file (copy to .env)
-├── requirements.txt         # Python dependencies
-├── handlers/
-│   ├── commands.py          # /start /help /deep /web /search /status /reset
-│   ├── messages.py          # Text, photo, document, album processing
-│   └── callbacks.py         # Inline button callbacks
-├── services/
-│   └── deepseek_ai.py       # DeepSeek client wrapper (p2d-deepseek)
-└── lib/
-    └── __init__.py          # MarkdownV2 escape helper
-```
+- [aiohttp](https://docs.aiohttp.org/) — health check server
 
 ---
 

@@ -14,22 +14,24 @@ from handlers.messages import send_response, send_error, _keep_typing, _delete_a
 
 logger = logging.getLogger(__name__)
 
-HELP_TEXT = """\
-MultiGPT AI  —  commands
-
-Model
-  /deep   — switch between DeepSeek Flash and Pro
-
-Chat tools
-  /web    <query>  — one-off forced web search
-  /search          — toggle web search on / off for all messages
-
-Session
-  /status  — current model and settings
-  /reset   — clear conversation history
-
-Send any message, photo or document to start chatting.\
-"""
+HELP_TEXT = (
+    "<b>DeepSeek Bot</b> — Commands\n\n"
+    "<b>Model</b>\n"
+    "<blockquote>/deep — Switch between Flash 🔵 and Pro 🔴</blockquote>\n"
+    "<b>Web Search</b>\n"
+    "<blockquote>"
+    "/web &lt;query&gt; — one-off forced web search\n"
+    "/search — toggle web search on / off for all messages"
+    "</blockquote>\n"
+    "<b>Thinking</b>\n"
+    "<blockquote>/think — toggle DeepSeek reasoning mode on / off</blockquote>\n"
+    "<b>Session</b>\n"
+    "<blockquote>"
+    "/status — show current model and settings\n"
+    "/reset — clear conversation history"
+    "</blockquote>\n\n"
+    "Send any message, photo or document to start chatting."
+)
 
 
 async def _auto_delete(msg):
@@ -51,14 +53,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         s.update(saved)
     name = user.first_name or "there"
     await update.message.reply_text(
-        f"Hey {name}! I'm MultiGPT AI.\n"
+        f"Hey {name}! I'm DeepSeek Bot.\n"
         "Use /help to see all available commands."
     )
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
-    await update.message.reply_text(HELP_TEXT)
+    await update.message.reply_text(HELP_TEXT, parse_mode="HTML")
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -71,9 +73,10 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     s = state.get(update.effective_user.id)
-    model_label = f"DeepSeek {DEEPSEEK_MODELS.get(s['model'], s['model'])}"
+    model_label = DEEPSEEK_MODELS.get(s["model"], s["model"])
     lines = [
         f"Model   : {model_label}",
+        f"Thinking: {'ON' if s['thinking'] else 'OFF'}",
         f"Search  : {'ON' if s['search'] else 'OFF'}",
         f"Session : {'active' if s['session_id'] else 'new'}",
     ]
@@ -83,9 +86,20 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_deep(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
     await update.message.reply_text(
-        "Choose a DeepSeek model:",
+        "Choose a model:",
         reply_markup=deepseek_picker_keyboard(),
     )
+
+
+async def cmd_think(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    asyncio.create_task(_auto_delete(update.message))
+    uid = update.effective_user.id
+    s   = state.get(uid)
+    s["thinking"] = not s["thinking"]
+    asyncio.create_task(db.save_state(uid, s))
+    status = "ON" if s["thinking"] else "OFF"
+    sent = await update.message.reply_text(f"Thinking mode: {status}")
+    asyncio.create_task(_delete_after(sent, 3))
 
 
 async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -100,14 +114,14 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    asyncio.create_task(_auto_delete(update.message))
     uid        = update.effective_user.id
     s          = state.get(uid)
     query_text = " ".join(context.args).strip() if context.args else ""
     msg        = update.message
 
     if not query_text:
-        sent = await msg.reply_text("Usage: /web <your search query>")
+        asyncio.create_task(_auto_delete(update.message))
+        sent = await msg.reply_text("Usage: /web &lt;your search query&gt;", parse_mode="HTML")
         asyncio.create_task(_delete_after(sent, 5))
         return
 

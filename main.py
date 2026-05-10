@@ -21,6 +21,7 @@ from handlers.commands import (
     cmd_reset,
     cmd_status,
     cmd_deep,
+    cmd_think,
     cmd_search,
     cmd_web,
 )
@@ -36,7 +37,8 @@ logger = logging.getLogger(__name__)
 BOT_COMMANDS = [
     BotCommand("start",  "Start the bot"),
     BotCommand("help",   "Show all commands"),
-    BotCommand("deep",   "Switch DeepSeek model (Flash / Pro)"),
+    BotCommand("deep",   "Switch model — Flash or Pro"),
+    BotCommand("think",  "Toggle reasoning mode on / off"),
     BotCommand("web",    "Force a one-off web search"),
     BotCommand("search", "Toggle web search on / off"),
     BotCommand("status", "Show current model and settings"),
@@ -74,6 +76,7 @@ async def start_bot() -> None:
     app.add_handler(CommandHandler("reset",  cmd_reset))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("deep",   cmd_deep))
+    app.add_handler(CommandHandler("think",  cmd_think))
     app.add_handler(CommandHandler("search", cmd_search))
     app.add_handler(CommandHandler("web",    cmd_web))
     app.add_handler(CallbackQueryHandler(handle_callback))
@@ -90,7 +93,7 @@ async def start_bot() -> None:
 
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
-    logger.info("MultiGPT AI is running")
+    logger.info("DeepSeek Bot is running")
 
     try:
         await asyncio.Event().wait()

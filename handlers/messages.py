@@ -54,13 +54,6 @@ async def send_response(msg, text: str) -> None:
                 logger.exception("Failed to send message part")
 
 
-async def _collect_duck(gen) -> str:
-    chunks: list[str] = []
-    async for chunk in gen:
-        chunks.append(chunk)
-    return "".join(chunks)
-
-
 async def _download(file_obj, suffix: str) -> str:
     fd, path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
