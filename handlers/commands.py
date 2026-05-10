@@ -10,7 +10,7 @@ import db
 from keyboards import deepseek_picker_keyboard
 from config import DEEPSEEK_MODELS
 from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
-from handlers.messages import send_response, send_error, _keep_typing, _delete_after, _collect_duck
+from handlers.messages import send_response, send_error, _keep_typing, _delete_after
 
 logger = logging.getLogger(__name__)
 

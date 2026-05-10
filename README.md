@@ -1,170 +1,157 @@
-<div align="center">
+# DeepSeek Telegram Bot
 
-<img src="https://img.shields.io/badge/MultiGPT_AI-Telegram_Bot-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" alt="MultiGPT AI" />
+A fully-featured Telegram bot powered by **DeepSeek AI** — supports web search, image and document reading, code generation, and multi-turn conversations with per-user session memory.
 
-<br/>
-
-**MultiGPT AI** — A powerful Telegram bot that unifies DeepSeek AI and DuckDuckGo AI (Duck.ai) into one interface. No separate apps, no switching — just one bot for everything.
-
-<br/>
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/pooraddyy/multigpt)
-
-<br/>
-
-![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
-![Telegram](https://img.shields.io/badge/python--telegram--bot-21.x-blue?style=flat-square)
-![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?style=flat-square&logo=mongodb&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
-
-</div>
+Built using [p2d-deepseek](https://github.com/pooraddyy/deepseek-free) — an unofficial free Python client for DeepSeek that works with just your **browser auth token**. No paid API key needed.
 
 ---
 
-## ✨ Features
+## What this bot can do
 
-| Feature | Details |
+| Capability | Details |
 |---|---|
-| 🤖 **8 AI Models** | DeepSeek Flash & Pro + GPT-4o Mini, GPT-5 Mini, Claude Haiku, Llama 4, Mistral, GPT-OSS 120B |
-| 🎨 **Image Generation** | Generate images from text prompts via Duck.ai |
-| ✏️ **Image Editing** | Edit any image with a text instruction |
-| 🔍 **Web Search** | Force real-time web search on any query |
-| 🧠 **Reasoning Mode** | Switch between Fast ⚡ and Reasoning 🧠 modes for supported models |
-| 💾 **Persistent State** | Your model preference and settings saved to MongoDB |
-| 📎 **File & Photo Support** | Send images or documents and ask questions about them |
-| 🖼️ **Album Support** | Send multiple images at once |
-| ✍️ **MarkdownV2 Rendering** | Bold, code blocks, math, and more |
-| ⚡ **Auto-delete Commands** | All command messages vanish in 0.1s for a clean chat |
+| **Chat** | Multi-turn conversation with full memory per user |
+| **Web Search** | Real-time web results via `/search` toggle or `/web` one-off |
+| **Image Reading** | Send any photo — the bot describes, analyses, or answers questions about it |
+| **Document OCR** | Upload PDFs, Word docs, Excel sheets, code files, CSVs — the bot reads and responds |
+| **Code Generation** | Ask for code in any language — generates, explains, and debugs |
+| **Album Support** | Send multiple photos or documents at once — all processed together |
+| **Model Switching** | Flash (fast) or Pro (deeper reasoning) via `/deep` |
+| **Persistent Settings** | Model preference and search toggle saved per user in MongoDB |
 
 ---
 
-## 🤖 Commands
+## Models
 
-### Model Selection
-
-| Command | Description |
-|---|---|
-| `/deep` | Pick a **DeepSeek** model (Flash / Pro) |
-| `/duck` | Pick a **Duck AI** model (6 models) |
-| `/mode` | Switch between ⚡ Fast and 🧠 Reasoning for supported models |
-
-### Actions
-
-| Command | Description |
-|---|---|
-| `/web <query>` | Search the web and get an AI answer |
-| `/img_gen <prompt>` | Generate an image from a text description |
-| `/img_edit <caption>` | Edit a photo — send with a photo or reply to one |
-
-### Utility
-
-| Command | Description |
-|---|---|
-| `/start` | Start the bot and restore your saved settings |
-| `/status` | Show current model, provider, and session info |
-| `/reset` | Clear conversation history and start fresh |
+| Model | Label | Best for |
+|---|---|---|
+| `deepseek-v4-flash` | Flash | Fast replies, everyday chat, code — **default** |
+| `deepseek-v4-pro` | Pro | Complex reasoning, maths, long documents, research |
 
 ---
 
-## 🧠 Available Models
+## Commands
 
-### DeepSeek (via p2d-deepseek)
-
-| Alias | Label |
+| Command | Action |
 |---|---|
-| `deepseek-v4-flash` | ⚡ Flash — fast responses |
-| `deepseek-v4-pro` | 🧠 Pro — deep reasoning |
-
-### Duck AI (via p2d-duck · no API key needed)
-
-| Alias | Model | Reasoning? | Web Search? |
-|---|---|---|---|
-| `gpt4` | GPT-4o Mini | ❌ | ✅ |
-| `gpt5_mini` | GPT-5 Mini | ✅ | ✅ |
-| `claude` | Claude Haiku 4.5 | ✅ | ✅ |
-| `llama` | Llama 4 Scout | ❌ | ❌ |
-| `mistral` | Mistral Small | ❌ | ❌ |
-| `gpt-oss` | GPT-OSS 120B | ✅ | ❌ |
+| `/start` | Greet and restore saved settings |
+| `/help` | Show all commands |
+| `/deep` | Switch between DeepSeek Flash and Pro |
+| `/web <query>` | One-off forced web search |
+| `/search` | Toggle web search on / off for all messages |
+| `/status` | Show current model and settings |
+| `/reset` | Clear conversation history |
 
 ---
 
-## 🚀 Deploy
+## Setup
 
-### Option 1 — Render (Recommended)
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/pooraddyy/multigpt)
-
-1. Click the button above
-2. Fill in the environment variables (see table below)
-3. Click **Deploy**
-
-### Option 2 — Railway
-
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?template=https://github.com/pooraddyy/multigpt)
-
-### Option 3 — Run Locally
+### 1. Clone the repo
 
 ```bash
-git clone https://github.com/pooraddyy/multigpt.git
-cd multigpt
-pip install -r requirements.txt
+git clone https://github.com/pooraddyy/deepseek-bot.git
+cd deepseek-bot
+```
+
+### 2. Install dependencies
+
+```bash
+pip install -r bot/requirements.txt
+```
+
+### 3. Configure environment
+
+Copy `bot/sample.env` to `bot/.env` and fill in your values:
+
+```bash
+cp bot/sample.env bot/.env
+```
+
+```env
+BOT_TOKEN=your_telegram_bot_token_here
+AUTH_TOKEN=your_deepseek_auth_token_here
+MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority
+PORT=8000
+```
+
+- **BOT_TOKEN** — get from [@BotFather](https://t.me/BotFather) on Telegram
+- **AUTH_TOKEN** — your DeepSeek auth token (see section below — no paid API key needed)
+- **MONGODB_URL** — MongoDB Atlas connection string (free tier works)
+
+### 4. Run
+
+```bash
+cd bot
 python main.py
 ```
 
 ---
 
-## ⚙️ Environment Variables
+## Getting your DeepSeek AUTH_TOKEN
 
-| Variable | Required | Description |
-|---|---|---|
-| `BOT_TOKEN` | ✅ | Telegram Bot Token from [@BotFather](https://t.me/BotFather) |
-| `AUTH_TOKEN` | ✅ | DeepSeek API key from [platform.deepseek.com](https://platform.deepseek.com) |
-| `MONGODB_URL` | ✅ | MongoDB Atlas connection string |
-| `PORT` | ❌ | HTTP health check port (default: `8000`) |
+This bot uses [p2d-deepseek](https://github.com/pooraddyy/deepseek-free) — an unofficial client that authenticates with DeepSeek using your **browser session token**, the same one DeepSeek's own website uses. This means you get full DeepSeek access completely free — no API subscription required.
 
-Create a `.env` file:
+### Method 1 — LocalStorage (Fastest, Desktop)
 
-```env
-BOT_TOKEN=your_telegram_bot_token
-AUTH_TOKEN=your_deepseek_api_key
-MONGODB_URL=mongodb+srv://user:pass@cluster.mongodb.net/...
-PORT=8000
-```
+1. Go to [chat.deepseek.com](https://chat.deepseek.com) and log in
+2. Press `F12` to open DevTools
+3. Go to the **Application** tab (click `»` if hidden)
+4. In the left sidebar: **Local Storage** → `https://chat.deepseek.com`
+5. Find the key `userToken` and copy its **value** — that is your `AUTH_TOKEN`
+
+### Method 2 — Network Tab (Desktop)
+
+1. Go to [chat.deepseek.com](https://chat.deepseek.com) and log in
+2. Open DevTools → **Network** tab
+3. Send any message in the chat
+4. Click any request going to `chat.deepseek.com`
+5. Open **Headers** → find the `authorization` header
+6. Copy the value **without** the `Bearer ` prefix
+
+### Method 3 — Kiwi Browser (Android)
+
+1. Install [Kiwi Browser](https://play.google.com/store/apps/details?id=com.kiwibrowser.browser) from the Play Store
+2. Open [chat.deepseek.com](https://chat.deepseek.com) and log in
+3. Tap menu (⋮) → **Developer Tools**
+4. Go to **Application** tab → **Local Storage** → `https://chat.deepseek.com`
+5. Find `userToken` and copy its **value**
+
+> **Token expired?** Tokens expire when your DeepSeek session ends or you log out. Just repeat any method above to get a fresh one.
 
 ---
 
-## 🗂️ Project Structure
+## Built with
+
+- [p2d-deepseek](https://github.com/pooraddyy/deepseek-free) — free unofficial DeepSeek Python client (auth token, no API key)
+- [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) v22
+- [Motor](https://motor.readthedocs.io/) — async MongoDB driver
+- [aiohttp](https://docs.aiohttp.org/) — lightweight health check server
+
+---
+
+## Project structure
 
 ```
-├── main.py              # Entry point — bot + health server
-├── config.py            # Env var loading & model definitions
-├── state.py             # In-memory per-user state
-├── db.py                # MongoDB persistence (motor)
-├── keyboards.py         # Inline keyboard builders
+bot/
+├── main.py                  # Entry point, handler registration, health server
+├── config.py                # Env vars, model definitions
+├── state.py                 # In-memory per-user state
+├── db.py                    # MongoDB persistence (users + settings)
+├── keyboards.py             # Inline keyboards (model picker)
+├── sample.env               # Template env file (copy to .env)
+├── requirements.txt         # Python dependencies
 ├── handlers/
-│   ├── commands.py      # All slash command handlers
-│   ├── messages.py      # Text, photo, document, album routing
-│   └── callbacks.py     # Inline button callbacks
+│   ├── commands.py          # /start /help /deep /web /search /status /reset
+│   ├── messages.py          # Text, photo, document, album processing
+│   └── callbacks.py         # Inline button callbacks
 ├── services/
-│   ├── deepseek_ai.py   # DeepSeek API wrapper
-│   └── duck_service.py  # Duck AI wrapper (chat, image gen/edit)
-├── lib/
-│   └── __init__.py      # p2dmd markdown helper
-├── render.yaml          # Render deployment config
-└── requirements.txt
+│   └── deepseek_ai.py       # DeepSeek client wrapper (p2d-deepseek)
+└── lib/
+    └── __init__.py          # MarkdownV2 escape helper
 ```
 
 ---
 
-## 📦 Requirements
-
-- Python 3.11+
-- MongoDB Atlas (free tier works)
-- DeepSeek API key
-- Telegram Bot Token
-
----
-
-## 📄 License
+## License
 
 MIT
