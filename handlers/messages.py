@@ -19,8 +19,8 @@ SAFE_LIMIT        = TG_LIMIT - 100
 IMAGE_ONLY_PROMPT = "Describe this image in detail."
 ALBUM_ONLY_PROMPT = "Describe these images in detail."
 DOC_ONLY_PROMPT   = "Analyse this file and summarise its contents in detail."
-NO_TEXT_IMAGE     = "Is image mein koi bhi readable text nahi mila."
-NO_TEXT_DOC       = "Is file mein koi bhi readable content nahi mila."
+NO_TEXT_IMAGE     = "No readable text was found in this image."
+NO_TEXT_DOC       = "No readable content was found in this file."
 
 
 def _split_text(text: str) -> list[str]:
