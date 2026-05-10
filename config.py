@@ -20,5 +20,4 @@ DEEPSEEK_MODELS: dict[str, str] = {
     "deepseek-v4-pro":   "Pro",
 }
 
-DEFAULT_PROVIDER = "deepseek"
-DEFAULT_MODEL    = "deepseek-v4-flash"
+DEFAULT_MODEL = "deepseek-v4-flash"

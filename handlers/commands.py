@@ -60,7 +60,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_auto_delete(update.message))
-    await update.message.reply_text(HELP_TEXT, parse_mode="HTML")
+    sent = await update.message.reply_text(HELP_TEXT, parse_mode="HTML")
+    asyncio.create_task(_delete_after(sent, 15))
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):

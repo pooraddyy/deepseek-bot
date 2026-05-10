@@ -26,6 +26,14 @@ def _split_text(text: str) -> list[str]:
     parts: list[str] = []
     while len(text) > SAFE_LIMIT:
         window = text[:SAFE_LIMIT]
+        code_fences = [i for i in range(len(window) - 2) if window[i:i+3] == "```"]
+        if len(code_fences) % 2 == 1:
+            close = text.find("```", SAFE_LIMIT)
+            if 0 < close < SAFE_LIMIT + 2000:
+                split_at = close + 3
+                parts.append(text[:split_at].rstrip())
+                text = text[split_at:].lstrip("\n")
+                continue
         idx = window.rfind("\n\n")
         if idx < SAFE_LIMIT // 4:
             idx = window.rfind("\n")
@@ -88,7 +96,6 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
     anim_action = ChatAction.UPLOAD_DOCUMENT if file_paths else ChatAction.TYPING
     stop_anim   = asyncio.Event()
     anim_task   = asyncio.create_task(_keep_typing(msg.chat, anim_action, stop_anim))
-
     try:
         raw, sid = await ds_chat(
             prompt,
@@ -102,7 +109,6 @@ async def _process(uid: int, msg, prompt: str, file_paths: list) -> None:
         stop_anim.set()
         anim_task.cancel()
         await send_response(msg, raw)
-
     except DeepSeekConnectionError:
         await send_error(msg, "Connection error — please try again.")
     except DeepSeekAPIError as e:
@@ -144,13 +150,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     msg = update.message
     if not msg:
         return
-
     uid  = update.effective_user.id
     user = update.effective_user
     asyncio.create_task(db.save_user(uid, user.username, user.first_name))
-
     raw_caption = (msg.caption or "").strip()
-
     if msg.media_group_id:
         if msg.photo:
             tg_file = await msg.photo[-1].get_file()
@@ -176,9 +179,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             name=f"album:{msg.media_group_id}",
         )
         return
-
     file_paths: list[str] = []
-
     if msg.photo:
         tg_file = await msg.photo[-1].get_file()
         file_paths.append(await _download(tg_file, ".jpg"))
@@ -186,10 +187,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         tg_file = await msg.document.get_file()
         suffix  = os.path.splitext(msg.document.file_name or "")[1] or ".bin"
         file_paths.append(await _download(tg_file, suffix))
-
     if file_paths and not (msg.text or raw_caption):
         prompt = IMAGE_ONLY_PROMPT
     else:
         prompt = msg.text or raw_caption or ""
-
     asyncio.create_task(_process(uid, msg, prompt, file_paths))
