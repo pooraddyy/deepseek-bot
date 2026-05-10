@@ -11,7 +11,7 @@ def _default_state() -> dict:
     }
 
 
-_users: dict = defaultdict(_default_state)
+_users: dict       = defaultdict(_default_state)
 album_buffer: dict = defaultdict(list)
 
 

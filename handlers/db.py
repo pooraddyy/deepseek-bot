@@ -2,7 +2,7 @@ import motor.motor_asyncio
 from config import MONGODB_URL
 
 _client   = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URL)
-_db       = _client["multigpt_bot"]
+_db       = _client["deepseek_bot"]
 users_col = _db["users"]
 state_col = _db["user_state"]
 

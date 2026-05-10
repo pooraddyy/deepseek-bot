@@ -5,19 +5,18 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ChatAction
 
-import state
-import db
-from keyboards import deepseek_picker_keyboard
+from . import state, db
+from .keyboards import deepseek_picker_keyboard
+from .messages import send_response, send_error, _keep_typing, _delete_after
 from config import DEEPSEEK_MODELS
 from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
-from handlers.messages import send_response, send_error, _keep_typing, _delete_after
 
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = (
     "<b>DeepSeek Bot</b> — Commands\n\n"
     "<b>Model</b>\n"
-    "<blockquote>/deep — Switch between Flash 🔵 and Pro 🔴</blockquote>\n"
+    "<blockquote>/deep — Switch between Flash and Pro</blockquote>\n"
     "<b>Web Search</b>\n"
     "<blockquote>"
     "/web &lt;query&gt; — one-off forced web search\n"
@@ -119,13 +118,11 @@ async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s          = state.get(uid)
     query_text = " ".join(context.args).strip() if context.args else ""
     msg        = update.message
-
     if not query_text:
         asyncio.create_task(_auto_delete(update.message))
         sent = await msg.reply_text("Usage: /web &lt;your search query&gt;", parse_mode="HTML")
         asyncio.create_task(_delete_after(sent, 5))
         return
-
     stop_typing = asyncio.Event()
     typing_task = asyncio.create_task(_keep_typing(msg.chat, ChatAction.TYPING, stop_typing))
     try:
@@ -143,11 +140,11 @@ async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_response(msg, raw)
     except DeepSeekConnectionError:
         await send_error(msg, "Connection error — please try again.")
-    except DeepSeekAPIError as e:
-        await send_error(msg, f"API error: {e}")
-    except Exception as e:
+    except DeepSeekAPIError:
+        await send_error(msg, "DeepSeek API error — please try again later.")
+    except Exception:
         logger.exception("cmd_web error")
-        await send_error(msg, f"Unexpected error: {e}")
+        await send_error(msg, "Kuch gadbad ho gayi — please try again.")
     finally:
         stop_typing.set()
         typing_task.cancel()

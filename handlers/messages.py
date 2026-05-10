@@ -7,10 +7,9 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
-import state
-import db
+from . import state, db
+from .utils import escape_md
 from services.deepseek_ai import chat as ds_chat, DeepSeekConnectionError, DeepSeekAPIError
-from lib import escape_md
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +18,8 @@ SAFE_LIMIT        = TG_LIMIT - 100
 IMAGE_ONLY_PROMPT = "Describe this image in detail."
 ALBUM_ONLY_PROMPT = "Describe these images in detail."
 DOC_ONLY_PROMPT   = "Analyse this file and summarise its contents in detail."
-NO_TEXT_IMAGE     = "No readable text was found in this image."
-NO_TEXT_DOC       = "No readable content was found in this file."
+NO_TEXT_IMAGE     = "Is image mein koi bhi readable text nahi mila."
+NO_TEXT_DOC       = "Is file mein koi bhi readable content nahi mila."
 
 
 def _split_text(text: str) -> list[str]:
@@ -95,7 +94,7 @@ async def _keep_typing(chat, action: str = ChatAction.TYPING, stop_event: asynci
 
 
 async def _process(uid: int, msg, prompt: str, file_paths: list, is_document: bool = False) -> None:
-    s = state.get(uid)
+    s           = state.get(uid)
     anim_action = ChatAction.UPLOAD_DOCUMENT if file_paths else ChatAction.TYPING
     stop_anim   = asyncio.Event()
     anim_task   = asyncio.create_task(_keep_typing(msg.chat, anim_action, stop_anim))
